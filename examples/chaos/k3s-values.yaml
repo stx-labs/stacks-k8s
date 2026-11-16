@@ -1,0 +1,4 @@
+# k3s/k3d overlay for upstream-values.yaml: k3s embeds containerd at its own
+# socket path. Not qualified; see docs/chaos/qualification.md.
+chaosDaemon:
+  socketPath: /run/k3s/containerd/containerd.sock

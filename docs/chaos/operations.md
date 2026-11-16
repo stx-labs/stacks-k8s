@@ -15,8 +15,10 @@ make cluster-chaos-install
 
 This installs the pinned upstream Chaos Mesh chart with
 [`upstream-values.yaml`](../../examples/chaos/upstream-values.yaml). Its controller
-filters namespaces. Enable injection on each experiment namespace before creating
-faults:
+filters namespaces. On the k3d cluster (`PROVIDER=k3d`), the
+[k3s overlay](../../examples/chaos/k3s-values.yaml) selects k3s's containerd
+socket; native faults on k3s are not yet qualified. Enable injection on each
+experiment namespace before creating faults:
 
 ```bash
 kubectl --kubeconfig tools/local-cluster/kubeconfig --context kind-stacks-k8s \
@@ -29,6 +31,15 @@ platform evidence are in the [qualification matrix](qualification.md). Select
 Kubernetes credentials appropriate to the agent's granted authority; stacks-k8s
 does not provision an experiment-agent ServiceAccount. Confirm the context and
 namespace before creating or deleting a fault.
+
+The values also deploy Chaos Mesh's DNS server for `DNSChaos`. During a fault,
+selected Pods resolve through it: matching names fail or return random answers,
+while other names are forwarded to cluster DNS. The cluster's CoreDNS
+configuration is not changed. Actors address peers by Service DNS name, so this
+reaches peer discovery. A cluster-scoped install grants the DNS server's
+ServiceAccount all verbs on ConfigMaps and `chaos-mesh.org` resources in every
+namespace. Egress NetworkPolicies on target Pods must allow the
+`chaos-mesh-dns-server` Service.
 
 ## Select and observe
 

@@ -14,10 +14,10 @@ import (
 // TestLifecycle verifies command targeting and error propagation without a cluster.
 func TestLifecycle(t *testing.T) {
 	for _, tc := range []struct {
-		name, target, nodes, fail, metricsOwner string
-		args                                    []string
-		wantError                               bool
-		want, reject                            []string
+		name, provider, target, nodes, fail, metricsOwner string
+		args                                              []string
+		wantError                                         bool
+		want, reject                                      []string
 	}{
 		{
 			name:   "create",
@@ -100,8 +100,7 @@ func TestLifecycle(t *testing.T) {
 			target: "chaos-install",
 			want: []string{
 				"helm pull chaos-mesh --repo https://charts.chaos-mesh.org --version 2.8.4",
-				"helm upgrade --install chaos-mesh",
-				"--kubeconfig kubeconfig --kube-context kind-stacks-k8s",
+				"helm --kubeconfig kubeconfig --kube-context kind-stacks-k8s upgrade --install chaos-mesh",
 				"--namespace chaos-mesh --create-namespace --reset-values",
 				"--values ../../examples/chaos/upstream-values.yaml --wait --timeout 5m",
 			},
@@ -251,6 +250,77 @@ func TestLifecycle(t *testing.T) {
 			want:   []string{"kind delete cluster --name stacks-k8s --kubeconfig kubeconfig"},
 			reject: []string{"docker ", "create cluster"},
 		},
+		{
+			name:      "invalid provider",
+			target:    "create",
+			args:      []string{"PROVIDER=minikube"},
+			wantError: true,
+			reject:    []string{"kind ", "k3d ", "helm ", "kubectl "},
+		},
+		{
+			name:     "k3d create",
+			provider: "k3d",
+			target:   "create",
+			want: []string{
+				"k3d cluster create --config k3d.yaml",
+				"upgrade --install metrics-server",
+				"upgrade --install headlamp",
+			},
+			reject: []string{"kind ", "docker ", "delete"},
+		},
+		{
+			name:      "k3d create failure",
+			provider:  "k3d",
+			target:    "create",
+			fail:      "k3d",
+			wantError: true,
+			reject:    []string{"delete", "helm ", "kubectl "},
+		},
+		{
+			name:     "k3d start",
+			provider: "k3d",
+			target:   "start",
+			want: []string{
+				"k3d cluster start stacks-k8s",
+				"k3d kubeconfig merge stacks-k8s --output kubeconfig",
+				"--context k3d-stacks-k8s",
+				"node/k3d-stacks-k8s-server-0 node/k3d-stacks-k8s-agent-0 node/k3d-stacks-k8s-agent-1",
+			},
+			reject: []string{"kind ", "docker ", "create", "helm "},
+		},
+		{
+			name:      "k3d start failure",
+			provider:  "k3d",
+			target:    "start",
+			fail:      "k3d",
+			wantError: true,
+			reject:    []string{"merge", "kubectl "},
+		},
+		{
+			name:     "k3d stop",
+			provider: "k3d",
+			target:   "stop",
+			want:     []string{"k3d cluster stop stacks-k8s"},
+			reject:   []string{"kind ", "docker ", "kubectl "},
+		},
+		{
+			name:     "k3d chaos install",
+			provider: "k3d",
+			target:   "chaos-install",
+			want: []string{
+				"helm --kubeconfig kubeconfig --kube-context k3d-stacks-k8s upgrade --install chaos-mesh",
+				"--values ../../examples/chaos/upstream-values.yaml --values ../../examples/chaos/k3s-values.yaml " +
+					"--wait --timeout 5m",
+			},
+			reject: []string{"kind ", "k3d ", "kubectl "},
+		},
+		{
+			name:     "k3d destroy",
+			provider: "k3d",
+			target:   "destroy",
+			want:     []string{"k3d cluster delete stacks-k8s"},
+			reject:   []string{"kind ", "docker ", "create"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -272,12 +342,24 @@ func TestLifecycle(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "Makefile"), source, 0o600); err != nil {
 				t.Fatal(err)
 			}
+			for _, name := range []string{"kind.mk", "k3d.mk"} {
+				// #nosec G304 -- Path is derived from repository fixtures or a private test directory, not a remote request.
+				provider, err := os.ReadFile(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// #nosec G703 -- Path is derived from repository fixtures or a private test directory, not a remote request.
+				if err := os.WriteFile(filepath.Join(dir, name), provider, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			// Substitutes record commands and supply a chart fixture without external services.
 			fake := `#!/bin/sh
 set -eu
 command=${0##*/}
 printf '%s %s\n' "$command" "$*" >> "$CALL_LOG"
-test "$KIND_EXPERIMENTAL_PROVIDER" = docker
+if test "$command" = kind; then test "$KIND_EXPERIMENTAL_PROVIDER" = docker; fi
+if test "$command" = k3d; then test "$KUBECONFIG" = kubeconfig; fi
 test "$DOCKER_CONTEXT" = test-engine
 if test "$command" = "$FAIL_COMMAND"; then exit 1; fi
 case " $* " in *" $FAIL_COMMAND "*) if test -n "$FAIL_COMMAND"; then exit 1; fi ;; esac
@@ -300,19 +382,21 @@ if test "$command" = docker && test "$1" = ps; then
  printf '%s\n' "$TEST_NODES"
 fi
 `
-			for _, name := range []string{"docker", "kind", "kubectl", "helm"} {
+			for _, name := range []string{"docker", "kind", "k3d", "kubectl", "helm"} {
 				// #nosec G306 -- Private test stub must be executable; only its owner can read or execute it.
 				if err := os.WriteFile(filepath.Join(dir, name), []byte(fake), 0o700); err != nil {
 					t.Fatal(err)
 				}
 			}
 			log := filepath.Join(dir, "calls")
+			args := []string{"--no-print-directory", "-C", dir, tc.target, "HEADLAMP=true", "METRICS_SERVER=true"}
+			context := "kind-stacks-k8s"
+			if tc.provider != "" {
+				args = append(args, "PROVIDER="+tc.provider)
+				context = tc.provider + "-stacks-k8s"
+			}
 			// #nosec G204 -- Fixed executable and separate arguments from the test harness; no shell evaluation.
-			cmd := exec.CommandContext(t.Context(),
-				"make",
-				append(
-					[]string{"--no-print-directory", "-C", dir, tc.target, "HEADLAMP=true", "METRICS_SERVER=true"},
-					tc.args...)...)
+			cmd := exec.CommandContext(t.Context(), "make", append(args, tc.args...)...)
 			cmd.Env = append(
 				os.Environ(),
 				"PATH="+dir+":"+os.Getenv("PATH"),
@@ -347,11 +431,11 @@ fi
 			}
 			for _, line := range strings.Split(string(calls), "\n") {
 				if strings.HasPrefix(line, "kubectl ") &&
-					!strings.Contains(line, "--kubeconfig kubeconfig --context kind-stacks-k8s") {
+					!strings.Contains(line, "--kubeconfig kubeconfig --context "+context) {
 					t.Errorf("implicit Kubernetes context: %s", line)
 				}
 				if strings.HasPrefix(line, "helm ") && !strings.HasPrefix(line, "helm pull ") &&
-					!strings.Contains(line, "--kubeconfig kubeconfig --kube-context kind-stacks-k8s") {
+					!strings.Contains(line, "--kubeconfig kubeconfig --kube-context "+context) {
 					t.Errorf("implicit Helm context: %s", line)
 				}
 			}

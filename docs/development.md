@@ -116,15 +116,30 @@ not a tested-version matrix. Earlier qualification records retain their original
 Kubernetes versions. See the [1.37 live qualification](local-cluster-qualification.md)
 for cross-node native fault results and the unresolved Stacks recovery limit.
 
-## Local kind cluster
+## Local clusters
 
-The lifecycle helpers use standalone **kind 0.33.0** (or a compatible newer
-version), Docker, kubectl, Helm 3 and `shasum`. Helm and `shasum` are optional
-when both default add-ons are disabled. Start the Docker engine first. They use your
-current Docker connection; set `DOCKER_CONTEXT=desktop-linux` explicitly when
-using Docker Desktop. Docker Desktop's built-in Kubernetes provisioner is not
-used. The checked-in configuration pins Kubernetes **1.37.0** by image digest
-with one control-plane node and two workers.
+The lifecycle helpers create a three-node `stacks-k8s` cluster in Docker
+containers. `PROVIDER` selects the implementation; every `cluster-*` target
+accepts it:
+
+| `PROVIDER` | Tool | Nodes | Kubernetes image | Context |
+| --- | --- | --- | --- | --- |
+| `kind` (default) | standalone **kind 0.33.0** or compatible | kubeadm control plane, two workers | `kindest/node:v1.37.0` | `kind-stacks-k8s` |
+| `k3d` | **k3d 5.9.0** or compatible | k3s server, two agents | `rancher/k3s:v1.37.0-k3s1` | `k3d-stacks-k8s` |
+
+Both pin Kubernetes **1.37.0** by image digest. k3d disables k3s's bundled
+Traefik, ServiceLB and metrics server so add-ons match kind, and taints its server
+`NoSchedule` like kind's control plane, so workloads and injected faults stay on
+the two workers. Storage uses each distribution's default class. k3d matches the
+k3s runtime, CNI (flannel) and paths of multi-host k3s clusters. kind remains the
+qualified platform: kind results do not transfer to k3s, which needs its own
+qualification.
+
+The helpers also need Docker, kubectl, Helm 3 and `shasum`. Helm and `shasum`
+are optional when both default add-ons are disabled. Start the Docker engine first.
+They use your current Docker connection; set `DOCKER_CONTEXT=desktop-linux`
+explicitly when using Docker Desktop. Docker Desktop's built-in Kubernetes
+provisioner is not used.
 
 From the repository root:
 
@@ -133,21 +148,30 @@ make cluster-create  # Create stacks-k8s with Headlamp and Metrics Server.
 make cluster-stop   # Stop its node containers, retaining their data.
 make cluster-start  # Resume existing containers and wait for node readiness.
 make cluster-destroy # Delete stacks-k8s and all data stored in its nodes.
+make cluster-create PROVIDER=k3d # The same, using k3d.
 ```
 
 Create and start write `tools/local-cluster/kubeconfig`, which is ignored by Git,
-with context `kind-stacks-k8s`. Your global kubeconfig is unchanged. To use it:
+with the provider's context. Your global kubeconfig is unchanged. To use it:
 
 ```bash
 export KUBECONFIG="$PWD/tools/local-cluster/kubeconfig"
 kubectl --context kind-stacks-k8s get nodes
 ```
 
-The control-plane container also publishes `127.0.0.1:14000` to NodePort `30400`.
+The first node also publishes `127.0.0.1:14000` to NodePort `30400`.
 The optional [observability installation](observability/README.md#installation)
 uses this mapping for Greptime's dashboard and HTTP API. Cluster creation reserves
 the host port but does not install Greptime. Changing mappings requires recreation;
-stopping/starting an existing cluster preserves them.
+stopping/starting an existing cluster preserves them. Because both providers
+reserve this port, only one of them can run at a time.
+
+Load locally built images with the provider's command. Guides show the kind form:
+
+```bash
+kind load docker-image IMAGE --name stacks-k8s
+k3d image import IMAGE --cluster stacks-k8s
+```
 
 ### Dashboard and resource metrics
 
@@ -179,15 +203,15 @@ ingress. Set `HEADLAMP_PORT=8081` on `cluster-headlamp` to use another local por
 [Headlamp](https://headlamp.dev/docs/latest/installation/metrics-server/)
 automatically reads the Kubernetes metrics API for CPU/memory usage; no plugin
 is required. Metrics Server runs in `kube-system`, with `--kubelet-insecure-tls`
-for kind's self-signed kubelet serving certificates. These values are local-kind
-configuration, not a production installation profile. An existing externally
+for the local clusters' self-signed kubelet serving certificates. These values are
+local-cluster configuration, not a production installation profile. An existing externally
 managed metrics API is reused and checked for availability without taking over
 its release. Our own release is upgraded to the repository's pinned values.
 
 `HEADLAMP` and `METRICS_SERVER` accept `true` or `false`. To install only Headlamp,
 use `make cluster-headlamp-install METRICS_SERVER=false`. Explicit install
 commands do not create or start the cluster. All use the repository kubeconfig
-and `kind-stacks-k8s` context. Chart downloads require registry/repository access.
+and the selected provider's context. Chart downloads require registry/repository access.
 
 ```bash
 make cluster-headlamp-uninstall
@@ -208,9 +232,11 @@ make cluster-chaos-install
 
 This verifies the chart SHA-256, installs or reconciles release `chaos-mesh` in
 namespace `chaos-mesh`, and waits for readiness. Repeated calls reapply the
-repository's values, including containerd support, namespace filtering, and a
-disabled dashboard/DNS service. It uses the local kubeconfig and never creates
-or starts the cluster. Namespace enrollment, native faults, workloads, and
+repository's values, including containerd support, namespace filtering, a
+disabled dashboard and the Chaos DNS server used by `DNSChaos`. With `PROVIDER=k3d` it also applies
+[`k3s-values.yaml`](../examples/chaos/k3s-values.yaml) for k3s's containerd
+socket; that combination is not qualified. It uses the local kubeconfig and never
+creates or starts the cluster. Namespace enrollment, native faults, workloads, and
 qualification remain separate; see [native faults](chaos/operations.md#install-and-enroll).
 Successful installation does not qualify live fault injection on Kubernetes 1.37.
 

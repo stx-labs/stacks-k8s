@@ -8,7 +8,7 @@ clusterRoleBinding:
   clusterRoleName: cluster-admin
 config:
   inCluster: true
-  inClusterContextName: kind-stacks-k8s
+  inClusterContextName: stacks-k8s
   unsafeUseServiceAccountToken: false
 service:
   type: ClusterIP

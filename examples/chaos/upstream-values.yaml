@@ -1,5 +1,5 @@
 # Qualified local kind/containerd installation; upstream chart version 2.8.4.
-# The dashboard and other optional services are not needed for native CRD use.
+# The dashboard is not needed for native CRD use. The DNS server enables DNSChaos.
 images:
   registry: ghcr.io
   tag: v2.8.4
@@ -13,4 +13,4 @@ chaosDaemon:
 dashboard:
   create: false
 dnsServer:
-  create: false
+  create: true

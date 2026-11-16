@@ -1,5 +1,80 @@
 # Local Kubernetes 1.37 qualification
 
+## k3d provider (2026-11-16)
+
+Checked `PROVIDER=k3d` with k3d 5.9.0 (Homebrew), the pinned
+`rancher/k3s:v1.37.0-k3s1` image, Docker Desktop on arm64 and the checked-in
+`k3d.yaml`. The kind cluster was stopped for the run (shared host port 14000)
+and restarted afterwards.
+
+| Check | Result |
+| --- | --- |
+| `cluster-create` with both add-ons | Passed; three nodes Ready on `v1.37.0+k3s1`, Metrics Server owned by the repository release, Headlamp installed. |
+| Bundled components | Traefik, ServiceLB and k3s metrics server absent; `local-path` is the default storage class. |
+| Exposure and kubeconfig | API and port 14000 bound to `127.0.0.1`; only `tools/local-cluster/kubeconfig` gained the `k3d-stacks-k8s` context. |
+| `cluster-stop`, `cluster-start` | Passed; nodes returned Ready. |
+| `cluster-chaos-install` | Passed with the k3s overlay; daemons on all nodes use the containerd runtime at `/run/k3s/containerd`. |
+| `NetworkChaos` smoke | 300 ms delay on one Pod: median RTT 0.15 ms → 302 ms → 0.13 ms after deletion. |
+| `cluster-destroy` | Passed; no containers or volumes remained, and the kind context was retained. |
+
+k3d creates an empty `~/.config/k3d` directory.
+
+### Fault-type comparison
+
+One instance of each Chaos Mesh 2.8.4 fault type ran against busybox Pods on two
+different workers in each provider, with the repository values. Results were
+identical:
+
+| Fault | kind | k3d | Notes |
+| --- | --- | --- | --- |
+| `NetworkChaos` delay, loss, cross-node partition | Effective, recovered | Effective, recovered | RTT ~0.1 ms → 301 ms; 100% loss during loss and partition. |
+| `HTTPChaos` 2 s request delay | Effective, recovered | Effective, recovered | Fetch 0.05 s → 2.06 s. |
+| `StressChaos` one CPU worker | Effective, recovered | Effective, recovered | Target cgroup 0 → 1000 millicores. |
+| `PodChaos` container-kill, pod-kill | Effective | Effective | Restart count +1; Pod replaced. |
+| `TimeChaos` −1 h | Injected, no observed effect | Injected, no observed effect | Probe: bash builtin clock in a glibc PID 1. |
+| `IOChaos` latency | Not injected | Not injected | Injector `toda` cancelled; daemons log `fail to find device cgroup` for `/dev/fuse`. |
+| `DNSChaos` | Not available | Not available | The values then disabled the Chaos DNS server. |
+
+The IO and time results are common to both providers on Docker Desktop arm64,
+not k3d gaps. Time injection into a static busybox process hung the daemon call
+and blocked later time faults until the Pod and Chaos Mesh were restarted.
+`KernelChaos`, `BlockChaos` and `JVMChaos` were not tested. These are smoke
+results, not fault qualification.
+
+After the values enabled the DNS server, a kind `DNSChaos` error fault on one
+Pod failed resolution of the targeted Service name while
+`kubernetes.default` still resolved. The Pod's resolver switched from cluster
+DNS to the `chaos-mesh-dns-server` Service and back after deletion; the CoreDNS
+ConfigMap was unchanged. k3d was not rerun.
+
+The k3d server was then tainted `NoSchedule`. On recreation, only CoreDNS and
+the local-path provisioner ran on it; Headlamp, Metrics Server, the Chaos Mesh
+controller, its DNS server and both chaos daemons ran on the agents, matching kind. The fault
+comparison above predates the taint.
+
+### Minimal network on k3d
+
+The [minimal example](design/public-api/examples/minimal.yaml) ran on the
+tainted k3d cluster, with node names mapped to `k3d-stacks-k8s-agent-0`,
+`agent-1` and `server-0`. The operator image was built from `cab994a` plus this
+change (`sha256:94a52258697ab07f9b18b01f4b34c5d257c526345ad014d91a3f0488751ba3c1`)
+and loaded with `k3d image import`. Actors used `bitcoin/bitcoin:31.1` and the
+official 4.0.3 Stacks images, resolving to the same digests as the
+[kind qualification](network-operator/public-api-qualification.md#official-403-image-qualification--2026-09-15).
+
+| Stage | Result on 2026-11-16 UTC |
+| --- | --- |
+| Paused apply | `Resolved=True`; accounts, wallets and participants resolved. |
+| Running | Set at 21:53:39; `BitcoinPrepared=True` within 60 s. |
+| Initialization | 22:04:14 (634 s): `Initialized`, `Running` and `Operational` True. |
+| Placement | Bitcoin and Stacks node on `agent-0`, signer on `agent-1`, workers on `server-0` via the example's toleration; no restarts. |
+| Native progress | Over 60 s: Bitcoin 210 → 222, Stacks 173 → 197; `Epoch40`, PoX cycle 10, 1,000,000,000 STX stacked. |
+| Disposal | `Stopped` after 61 s; root deleted in 1 s with no participants, PVCs or actor Pods left; namespace removed. |
+
+One transient `VolumeBinding` scheduling conflict on the Bitcoin actor resolved
+without intervention. Observability, actions and faults were not exercised on
+this network. This is a single smoke run, not k3s qualification.
+
 ## Dashboard add-ons (2026-09-08)
 
 Qualified on the existing three-node `stacks-k8s` cluster, Kubernetes 1.37.0

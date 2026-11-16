@@ -1,0 +1,36 @@
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: stacks-k8s
+servers: 1
+agents: 2
+image: rancher/k3s:v1.37.0-k3s1@sha256:d33b1973401a60410681d66c007f5c3a51d565a7c03608904764aef3321fee4d
+kubeAPI:
+  hostIP: "127.0.0.1"
+ports:
+  # Observability chart dashboard.nodePort; Docker publishes only host loopback.
+  # Without the k3d load balancer, mappings attach directly to a node.
+  - port: 127.0.0.1:14000:30400
+    nodeFilters:
+      - server:0:direct
+options:
+  k3d:
+    wait: true
+    timeout: 120s
+    disableLoadbalancer: true
+  k3s:
+    # Match the kind cluster: no bundled ingress, service load balancer or metrics API.
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
+      - arg: --disable=servicelb
+        nodeFilters:
+          - server:*
+      - arg: --disable=metrics-server
+        nodeFilters:
+          - server:*
+      # Keep workloads and injected faults off the control plane, like kind.
+      - arg: --node-taint=node-role.kubernetes.io/control-plane:NoSchedule
+        nodeFilters:
+          - server:*

@@ -9,7 +9,7 @@ Neither optional chart provisions the network operator or substitutes for its CR
 - [Bounded action installation](../charts/stacks-action-operator/README.md)
 - [Read-only observation](../charts/stacks-observability-operator/README.md)
 - [Native faults](chaos/operations.md)
-- [Local cluster lifecycle](development.md#local-kind-cluster)
+- [Local cluster lifecycle](development.md#local-clusters)
 
 Use fresh namespaces/root identities for independent experiments and leave the
 shared development cluster running. Helm does not upgrade or remove bundled CRDs.

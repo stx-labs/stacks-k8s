@@ -35,6 +35,9 @@ make cluster-create
 export KUBECONFIG="$PWD/tools/local-cluster/kubeconfig"
 ```
 
+Add `PROVIDER=k3d` to `cluster-*` targets for an equivalent k3s cluster in k3d,
+with context `k3d-stacks-k8s`; see [local clusters](docs/development.md#local-clusters).
+
 Build and load the operator and compatible Stacks actor images, then install the
 [network chart](charts/stacks-network-operator/README.md). Images built from local
 revisions are supported; see [actor images](docs/network-operator/actor-images.md).
