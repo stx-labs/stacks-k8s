@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
 # Usage: minimal-network.sh KUBECONFIG CONTEXT OUTPUT_DIR
-# Runs the public minimal example on the local k3d cluster: apply paused, start,
-# wait for initialization, sample native progress, then dispose in the documented order.
+# Runs the public minimal example: apply paused, start, wait for initialization,
+# sample native progress, then dispose in the documented order. NODE_WORKER,
+# NODE_WORKER2 and NODE_CONTROL_PLANE replace the example's kind node names
+# (defaults: the local k3d cluster).
 set -euo pipefail
 KCFG=$1 CTX=$2 OUT=$3 NS=lab-minimal
+NODE_WORKER=${NODE_WORKER:-k3d-stacks-k8s-agent-0}
+NODE_WORKER2=${NODE_WORKER2:-k3d-stacks-k8s-agent-1}
+NODE_CONTROL_PLANE=${NODE_CONTROL_PLANE:-k3d-stacks-k8s-server-0}
 k() { kubectl --kubeconfig "$KCFG" --context "$CTX" "$@"; }
 kn() { k -n "$NS" "$@"; }
 stamp() { date -u +%H:%M:%S; }
 conditions() { kn get stacksnetwork network -o jsonpath='{range .status.conditions[*]}{.type}={.status}/{.reason} {end}'; }
 mkdir -p "$OUT"
 
-# Map the kind node names in the example onto the k3d cluster.
-sed -e 's/stacks-k8s-worker2/k3d-stacks-k8s-agent-1/' \
-  -e 's/hostname: stacks-k8s-worker$/hostname: k3d-stacks-k8s-agent-0/' \
-  -e 's/stacks-k8s-control-plane/k3d-stacks-k8s-server-0/' \
-  docs/design/public-api/examples/minimal.yaml > "$OUT/minimal-k3d.yaml"
+# Map the kind node names in the example onto this cluster.
+sed -e "s/hostname: stacks-k8s-worker2$/hostname: $NODE_WORKER2/" \
+  -e "s/hostname: stacks-k8s-worker$/hostname: $NODE_WORKER/" \
+  -e "s/hostname: stacks-k8s-control-plane$/hostname: $NODE_CONTROL_PLANE/" \
+  docs/design/public-api/examples/minimal.yaml > "$OUT/minimal.yaml"
 
-k apply -f "$OUT/minimal-k3d.yaml" >/dev/null
+k apply -f "$OUT/minimal.yaml" >/dev/null
 kn wait stacksnetwork/network --for=jsonpath='{.status.conditions[?(@.type=="Resolved")].status}'=True --timeout=5m
 echo "$(stamp) resolved: $(conditions)"
 
