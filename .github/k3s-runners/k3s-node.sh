@@ -7,7 +7,9 @@ set -euo pipefail
 role=$1
 token="$(printf '%s' "$TOKEN_SEED" | sha256sum | cut -d' ' -f1)"
 ip="$(tailscale ip -4)"
-args=(--node-ip "$ip" --flannel-iface tailscale0)
+# Runner VM hostnames can repeat across jobs; the per-run tailnet hostname is unique.
+name="$(tailscale status --json | jq -r .Self.HostName)"
+args=(--node-name "$name" --node-ip "$ip" --flannel-iface tailscale0)
 # Record the runner's Azure region, when the instance metadata service answers.
 region="$(curl -sf --max-time 2 -H Metadata:true \
   'http://169.254.169.254/metadata/instance/compute/location?api-version=2021-02-01&format=text' || true)"
