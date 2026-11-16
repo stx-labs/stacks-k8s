@@ -1,0 +1,98 @@
+name: k3d runner experiment
+
+# Experiment: what a single GitHub-hosted runner offers a k3d cluster, before
+# attempting a multi-runner k3s cluster. Results are data; fault outcomes do not fail jobs.
+on:
+  push:
+    branches:
+      - feat/k3d-gh-runner
+    paths:
+      - .github/workflows/k3d-runner-experiment.yml
+      - .github/k3d-runner/**
+      - tools/local-cluster/**
+      - examples/chaos/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: k3d-runner-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KCFG: ${{ github.workspace }}/tools/local-cluster/kubeconfig
+  CTX: k3d-stacks-k8s
+
+jobs:
+  faults:
+    name: Faults (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: azure/setup-helm@v5
+      - uses: azure/setup-kubectl@v5
+      - run: .github/k3d-runner/install-k3d.sh
+      - name: Runner facts
+        run: .github/k3d-runner/runner-facts.sh | tee -a "$GITHUB_STEP_SUMMARY"
+      - run: make cluster-create PROVIDER=k3d HEADLAMP=false
+      - run: make cluster-chaos-install PROVIDER=k3d
+      - name: Fault matrix
+        run: |
+          .github/k3d-runner/chaos-matrix.sh "$KCFG" "$CTX" | tee matrix.txt
+          { echo "### Fault matrix (${{ matrix.runner }})"; echo; grep '^|' matrix.txt; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl --kubeconfig "$KCFG" --context "$CTX" get pods -A -o wide || true
+          kubectl --kubeconfig "$KCFG" --context "$CTX" get events -A --sort-by=.lastTimestamp | tail -50 || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: faults-${{ matrix.runner }}
+          path: matrix.txt
+          if-no-files-found: ignore
+
+  network:
+    name: Minimal network (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: azure/setup-helm@v5
+      - uses: azure/setup-kubectl@v5
+      - run: .github/k3d-runner/install-k3d.sh
+      - name: Build operator image
+        run: docker build -f operators/network/Dockerfile -t stacks-network-operator:ci .
+      - run: make cluster-create PROVIDER=k3d HEADLAMP=false
+      - run: k3d image import stacks-network-operator:ci --cluster stacks-k8s
+      - name: Install network operator
+        run: |
+          helm --kubeconfig "$KCFG" --kube-context "$CTX" upgrade --install network charts/stacks-network-operator \
+            --namespace stacks-network-system --create-namespace --wait --timeout 5m \
+            --set image.tag=ci --set bitcoinObserverImage=stacks-network-operator:ci
+      - name: Minimal network
+        run: .github/k3d-runner/minimal-network.sh "$KCFG" "$CTX" network-out
+      - name: Diagnostics
+        if: failure()
+        run: |
+          mkdir -p network-out
+          kubectl --kubeconfig "$KCFG" --context "$CTX" get pods -A -o wide > network-out/pods-all.txt || true
+          kubectl --kubeconfig "$KCFG" --context "$CTX" -n lab-minimal get stacksnetwork network -o yaml > network-out/network.yaml || true
+          kubectl --kubeconfig "$KCFG" --context "$CTX" get events -A --sort-by=.lastTimestamp > network-out/events.txt || true
+          kubectl --kubeconfig "$KCFG" --context "$CTX" -n stacks-network-system logs deploy/network --tail=500 > network-out/operator.log || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: network-${{ matrix.runner }}
+          path: network-out
+          if-no-files-found: ignore
