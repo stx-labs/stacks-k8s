@@ -7,9 +7,6 @@ case "$(uname -m)" in
   aarch64) arch=arm64 digest=03cde5cf23e6e8e67de5a039ecf26e5b85aca82fba3e5d13dadf904cd218a250 ;;
   *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
-dir="$(mktemp -d)"
-trap 'rm -rf "$dir"' EXIT
-curl -fsSLo "$dir/k3d" "https://github.com/k3d-io/k3d/releases/download/$version/k3d-linux-$arch"
-printf '%s  %s\n' "$digest" "$dir/k3d" | sha256sum -c -
-sudo install -m 0755 "$dir/k3d" /usr/local/bin/k3d
+"$(dirname "$0")/../runner-lib/install-pinned.sh" k3d \
+  "https://github.com/k3d-io/k3d/releases/download/$version/k3d-linux-$arch" "$digest"
 k3d version

@@ -9,6 +9,7 @@ on:
     paths:
       - .github/workflows/k3d-runner-experiment.yml
       - .github/k3d-runner/**
+      - .github/runner-lib/**
       - tools/local-cluster/**
       - examples/chaos/**
   workflow_dispatch:

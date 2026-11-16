@@ -1,0 +1,87 @@
+name: k3s multi-runner experiment
+
+# Experiment: one k3s cluster spanning several GitHub-hosted runners, joined over
+# Tailscale. Measures join time, Tailscale paths, pod RTT and throughput across runners.
+# Requires repository variables TS_OAUTH_CLIENT_ID and TS_AUDIENCE from a Tailscale
+# OpenID Connect trust credential (auth_keys write on tag:ci), and a random
+# K3S_TOKEN_SALT secret. The tailnet policy should let tag:ci reach only tag:ci.
+on:
+  push:
+    branches:
+      - feat/k3d-gh-runner
+    paths:
+      - .github/workflows/k3s-runners-experiment.yml
+      - .github/k3s-runners/**
+      - .github/runner-lib/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # Tailscale workload identity federation
+
+concurrency:
+  group: k3s-runners-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AGENTS: 4
+  SERVER_HOST: k3s-${{ github.run_id }}-${{ github.run_attempt }}-server
+  TOKEN_SEED: ${{ github.run_id }}-${{ github.run_attempt }}-${{ secrets.K3S_TOKEN_SALT }}
+
+jobs:
+  server:
+    name: Server
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
+      - uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
+        with:
+          oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ vars.TS_AUDIENCE }}
+          tags: tag:ci
+          hostname: ${{ env.SERVER_HOST }}
+      - run: .github/k3s-runners/install-k3s.sh
+      - run: .github/k3s-runners/k3s-node.sh server
+      - name: Measure
+        run: |
+          mkdir -p out
+          .github/k3s-runners/measure.sh "$AGENTS" | tee out/measurements.md
+          cat out/measurements.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Diagnostics
+        if: always()
+        run: |
+          mkdir -p out
+          KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get nodes,pods -A -o wide > out/cluster.txt 2>&1 || true
+          tailscale status > out/tailscale-status.txt 2>&1 || true
+          sudo journalctl -u k3s --no-pager | tail -300 > out/k3s-server.log 2>&1 || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: server
+          path: out
+
+  agent:
+    name: Agent ${{ matrix.index }}
+    strategy:
+      fail-fast: false
+      matrix:
+        index: [1, 2, 3, 4]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
+        with:
+          oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ vars.TS_AUDIENCE }}
+          tags: tag:ci
+          hostname: k3s-${{ github.run_id }}-${{ github.run_attempt }}-agent-${{ matrix.index }}
+      - run: .github/k3s-runners/install-k3s.sh
+      - run: .github/k3s-runners/k3s-node.sh agent
+      - name: Hold until the server finishes
+        run: .github/k3s-runners/hold-agent.sh
+      - name: Agent log
+        if: always()
+        run: sudo journalctl -u k3s --no-pager | tail -100 || true
