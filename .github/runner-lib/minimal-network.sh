@@ -13,12 +13,18 @@ k() { kubectl --kubeconfig "$KCFG" --context "$CTX" "$@"; }
 kn() { k -n "$NS" "$@"; }
 stamp() { date -u +%H:%M:%S; }
 conditions() { kn get stacksnetwork network -o jsonpath='{range .status.conditions[*]}{.type}={.status}/{.reason} {end}'; }
-# Bitcoin height, highest Stacks height, and ready/total Pods per participant kind
-# (e.g. StacksNode=1/1) with total restarts, from the API status and Pod labels.
+# Greatest value of status FIELD across RESOURCE.
+highest() {
+  kn get "$1" -o jsonpath="{range .items[*]}{.status.$2}{\"\n\"}{end}" 2>/dev/null | sort -n | tail -1
+}
+# Heights from operator status (the network's burnchainObservations stay empty until
+# initialization completes): Bitcoin nodes' tip, the burn and Stacks heights Stacks nodes
+# have processed, and ready/total Pods per participant kind with total restarts.
 progress() {
-  local btc stx pods
-  btc="$(kn get stacksnetwork network -o jsonpath='{.status.burnchainObservations.bitcoin.height}' 2>/dev/null)"
-  stx="$(kn get stacksnetworkparticipants -o jsonpath='{range .items[*]}{.status.runtime.protocol.stacksHeight}{"\n"}{end}' 2>/dev/null | sort -n | tail -1)"
+  local btc burn stx pods
+  btc="$(highest bitcoinexecutions.bitcoin.stacks.org observation.height)"
+  burn="$(highest stacksnetworkparticipants runtime.protocol.burnHeight)"
+  stx="$(highest stacksnetworkparticipants runtime.protocol.stacksHeight)"
   pods="$(kn get pods -o jsonpath='{range .items[*]}{.metadata.labels.network\.stacks\.org/participant-kind}{"\t"}{.status.phase}{"\t"}{.status.containerStatuses[*].ready}{"\t"}{.status.containerStatuses[*].restartCount}{"\n"}{end}' 2>/dev/null |
     awk -F'\t' '$1 != "" && $2 != "Succeeded" {
         total[$1]++; if ($2 == "Running" && $3 !~ /false/) ready[$1]++
@@ -26,7 +32,7 @@ progress() {
       }
       END { for (k in total) printf "%s=%d/%d\n", k, ready[k], total[k]; printf "~restarts=%d\n", restarts }' |
     sort | tr -d '~' | paste -sd' ' -)"
-  echo "bitcoin=${btc:--} stacks=${stx:--} $pods"
+  echo "bitcoin=${btc:--} burn=${burn:--} stacks=${stx:--} $pods"
 }
 # Evidence is lost with the namespace and the runner: save it before teardown or on failure.
 collect() {
