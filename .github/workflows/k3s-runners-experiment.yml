@@ -28,6 +28,16 @@ on:
         type: choice
         options: ['0', '30', '60', '90']
         default: '0'
+      operator_node:
+        description: Where the network operator runs in network mode; server is next to the API server
+        type: choice
+        options: [agent, server]
+        default: agent
+      mode:
+        description: network runs the example; placement compares resolution with the operator on agent-1, server, agent-1
+        type: choice
+        options: [network, placement]
+        default: network
 
 permissions:
   contents: read
@@ -39,6 +49,7 @@ concurrency:
 
 env:
   AGENTS: 4
+  NODE_PREFIX: k3s-${{ github.run_id }}-${{ github.run_attempt }}
   SERVER_HOST: k3s-${{ github.run_id }}-${{ github.run_attempt }}-server
   TOKEN_SEED: ${{ github.run_id }}-${{ github.run_attempt }}-${{ secrets.K3S_TOKEN_SALT }}
   EXAMPLE: ${{ inputs.example || 'minimal' }}
@@ -49,9 +60,9 @@ jobs:
   server:
     name: Server
     runs-on: ubuntu-24.04
-    # Expressions have no arithmetic: 70 minutes (setup, up to 40 minutes of
-    # initialization, teardown) plus the selected hold.
-    timeout-minutes: ${{ inputs.hold == '90' && 160 || inputs.hold == '60' && 130 || inputs.hold == '30' && 100 || 70 }}
+    # Expressions have no arithmetic: 85 minutes (setup, up to 20 minutes of
+    # resolution and 40 of initialization, teardown) plus the selected hold.
+    timeout-minutes: ${{ inputs.hold == '90' && 175 || inputs.hold == '60' && 145 || inputs.hold == '30' && 115 || 85 }}
     env:
       KCFG: /etc/rancher/k3s/k3s.yaml
       CTX: default
@@ -79,23 +90,26 @@ jobs:
           helm --kubeconfig "$KCFG" --kube-context "$CTX" upgrade --install network charts/stacks-network-operator \
             --namespace stacks-network-system --create-namespace --wait --timeout 5m \
             --set image.tag=ci --set bitcoinObserverImage=stacks-network-operator:ci
+      - name: Place operator on the server
+        if: inputs.mode != 'placement' && inputs.operator_node == 'server'
+        run: .github/k3s-runners/place-operator.sh "$SERVER_HOST"
       - name: Dashboard
         run: .github/k3s-runners/dashboard.sh "$KCFG" "$CTX"
       - name: Network (${{ env.EXAMPLE }})
-        env:
-          NODE_PREFIX: k3s-${{ github.run_id }}-${{ github.run_attempt }}
-          NODE_CONTROL_PLANE: ${{ env.SERVER_HOST }}
+        if: inputs.mode != 'placement'
         run: |
           set -o pipefail
-          # The minimal example keeps its earlier placement; 30-actors spreads over all agents.
-          if [ "$EXAMPLE" = 30-actors ]; then
-            export WORKER_NODES="$NODE_PREFIX-agent-1 $NODE_PREFIX-agent-3"
-            export WORKER2_NODES="$NODE_PREFIX-agent-2 $NODE_PREFIX-agent-4" INIT_TIMEOUT=2400
-          else
-            export WORKER_NODES="$NODE_PREFIX-agent-1" WORKER2_NODES="$NODE_PREFIX-agent-2"
-          fi
+          . .github/k3s-runners/example-env.sh
           HOLD_SECONDS=$(( HOLD_MINUTES * 60 )) .github/runner-lib/network.sh \
             "docs/design/public-api/examples/$EXAMPLE.yaml" "$KCFG" "$CTX" out/network | tee out/network.log
+      - name: Operator placement (${{ env.EXAMPLE }})
+        if: inputs.mode == 'placement'
+        run: |
+          set -o pipefail
+          . .github/k3s-runners/example-env.sh
+          .github/k3s-runners/placement.sh "docs/design/public-api/examples/$EXAMPLE.yaml" out/placement \
+            "$NODE_PREFIX-agent-1" "$SERVER_HOST" | tee out/placement.log
+          cat out/placement/summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Diagnostics
         if: always()
         run: |
@@ -138,7 +152,7 @@ jobs:
       matrix:
         index: [1, 2, 3, 4]
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.hold == '90' && 160 || inputs.hold == '60' && 130 || inputs.hold == '30' && 100 || 70 }}
+    timeout-minutes: ${{ inputs.hold == '90' && 175 || inputs.hold == '60' && 145 || inputs.hold == '30' && 115 || 85 }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
@@ -152,7 +166,7 @@ jobs:
       - run: .github/k3s-runners/load-operator-image.sh
       - run: .github/k3s-runners/k3s-node.sh agent
       - name: Hold until the server finishes
-        run: .github/k3s-runners/hold-agent.sh $(( 3900 + HOLD_MINUTES * 60 ))
+        run: .github/k3s-runners/hold-agent.sh $(( 4800 + HOLD_MINUTES * 60 ))
       - name: Agent log
         if: always()
         run: sudo journalctl -u k3s --no-pager | tail -100 || true

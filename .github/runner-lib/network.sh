@@ -5,16 +5,19 @@
 # the documented order. The example's kind node pins are mapped onto this cluster:
 # stacks-k8s-worker and stacks-k8s-worker2 pins rotate through the space-separated
 # WORKER_NODES and WORKER2_NODES, and stacks-k8s-control-plane becomes NODE_CONTROL_PLANE
-# (defaults: the local k3d cluster). INIT_TIMEOUT bounds initialization in seconds
-# (default 1200: about twice a single runner's ~600s for the minimal example).
+# (defaults: the local k3d cluster). RESOLVE_TIMEOUT bounds resolution (default 300s) and
+# INIT_TIMEOUT initialization (default 1200s: about twice a single runner's ~600s for the
+# minimal example), both in seconds. RESOLVE_ONLY=true disposes right after resolution.
 # HOLD_SECONDS (default 0) keeps the network up for live inspection before teardown, also
 # after a failure; creating HOLD_RELEASE ends the hold early.
 set -euo pipefail
 EXAMPLE=$1 KCFG=$2 CTX=$3 OUT=$4
+RESOLVE_ONLY=${RESOLVE_ONLY:-false}
 NS="$(awk '/^kind: StacksNetwork$/ { found = 1 } found && /^  namespace:/ { print $2; exit }' "$EXAMPLE")"
 WORKER_NODES=${WORKER_NODES:-k3d-stacks-k8s-agent-0}
 WORKER2_NODES=${WORKER2_NODES:-k3d-stacks-k8s-agent-1}
 NODE_CONTROL_PLANE=${NODE_CONTROL_PLANE:-k3d-stacks-k8s-server-0}
+RESOLVE_TIMEOUT=${RESOLVE_TIMEOUT:-300}
 INIT_TIMEOUT=${INIT_TIMEOUT:-1200}
 HOLD_SECONDS=${HOLD_SECONDS:-0}
 HOLD_RELEASE=${HOLD_RELEASE:-/tmp/stacks-k8s-release}
@@ -62,12 +65,36 @@ collect() {
       rm -f "$OUT/logs/${pod#pod/}.previous.log"
   done
 }
+# API server request counters for every client, one series per label set.
+requests() { k get --raw /metrics 2>/dev/null | grep '^apiserver_request_total{' || true; }
+# Requests between two snapshots for *.stacks.org resources and Secrets, as
+# "count VERB resource[/subresource] code", largest first. Includes every client.
+request_delta() {
+  awk 'NR == FNR { before[$1] = $2; next } { d = $2 - before[$1]; if (d > 0) print $1, d }' "$1" "$2" |
+    awk '$1 ~ /group="[a-z.]*stacks\.org"|resource="secrets"/ {
+        match($1, /verb="[A-Z]+"/); verb = substr($1, RSTART + 6, RLENGTH - 7)
+        match($1, /resource="[a-z]+"/); res = substr($1, RSTART + 10, RLENGTH - 11)
+        part = ""; if (match($1, /subresource="[a-z]+"/)) part = "/" substr($1, RSTART + 13, RLENGTH - 14)
+        match($1, /code="[0-9]+"/); code = substr($1, RSTART + 6, RLENGTH - 7)
+        n[verb " " res part " " code] += $2
+      }
+      END { for (k in n) print n[k], k }' | sort -rn
+}
 hold() {
   (( HOLD_SECONDS > 0 )) || return 0
   local deadline=$(( $(date +%s) + HOLD_SECONDS ))
   echo "$(stamp) holding up to ${HOLD_SECONDS}s for inspection; create $HOLD_RELEASE to continue"
   until [ -e "$HOLD_RELEASE" ] || (( $(date +%s) >= deadline )); do sleep 10; done
   echo "$(stamp) hold ended"
+}
+# Documented order: stop, delete the network, then its namespace.
+dispose() {
+  kn patch stacksnetwork network --type=merge -p '{"spec":{"operation":"Stopped"}}' >/dev/null
+  kn wait stacksnetwork/network --for=jsonpath='{.status.phase}'=Stopped --timeout=5m
+  kn delete stacksnetwork network --wait=true --timeout=5m
+  kn get stacksnetworkparticipants,persistentvolumeclaims
+  k delete namespace "$NS" --wait=true --timeout=5m
+  echo "$(stamp) disposed"
 }
 on_exit() { local status=$?; if [ "$status" -ne 0 ]; then collect; hold; fi; }
 trap on_exit EXIT
@@ -81,9 +108,26 @@ awk -v workers="$WORKER_NODES" -v workers2="$WORKER2_NODES" -v control="$NODE_CO
   /hostname: stacks-k8s-control-plane$/ { sub(/stacks-k8s-control-plane$/, control) }
   { print }' "$EXAMPLE" > "$OUT/network-manifest.yaml"
 
+requests > "$OUT/requests-before.txt"
 k apply -f "$OUT/network-manifest.yaml" >/dev/null
-kn wait stacksnetwork/network --for=jsonpath='{.status.conditions[?(@.type=="Resolved")].status}'=True --timeout=5m
+applied=$(date +%s)
+kn wait stacksnetwork/network --for=jsonpath='{.status.conditions[?(@.type=="Resolved")].status}'=True \
+  --timeout="${RESOLVE_TIMEOUT}s"
+echo "resolved_seconds=$(( $(date +%s) - applied ))" | tee "$OUT/resolved.env"
+requests > "$OUT/requests-resolved.txt"
+request_delta "$OUT/requests-before.txt" "$OUT/requests-resolved.txt" > "$OUT/resolution-requests.txt"
+# Aggregate API server workload during resolution, summed over every client: not per-pass
+# or per-controller timing.
+awk '{ total += $1; if ($2 == "GET" && $3 == "stacksnetworks") gets += $1; if ($4 == 409) conflicts += $1 }
+  END { printf "aggregate_requests=%d\naggregate_network_gets=%d\naggregate_conflicts=%d\n", total, gets, conflicts }' \
+  "$OUT/resolution-requests.txt" | tee -a "$OUT/resolved.env"
+head -8 "$OUT/resolution-requests.txt"
 echo "$(stamp) resolved: $(conditions)"
+if [ "$RESOLVE_ONLY" = true ]; then
+  collect
+  dispose
+  exit 0
+fi
 
 kn patch stacksnetwork network --type=merge -p '{"spec":{"operation":"Running"}}' >/dev/null
 start=$(date +%s)
@@ -106,10 +150,4 @@ echo "$(stamp) progress $(info)"
 k get --raw "/api/v1/namespaces/$NS/services/$rpc:20443/proxy/v2/pox" | jq -c '{epoch: .current_epoch, cycle: .current_cycle.id}'
 collect
 hold
-
-kn patch stacksnetwork network --type=merge -p '{"spec":{"operation":"Stopped"}}' >/dev/null
-kn wait stacksnetwork/network --for=jsonpath='{.status.phase}'=Stopped --timeout=5m
-kn delete stacksnetwork network --wait=true --timeout=5m
-kn get stacksnetworkparticipants,persistentvolumeclaims
-k delete namespace "$NS" --wait=true --timeout=5m
-echo "$(stamp) disposed"
+dispose
