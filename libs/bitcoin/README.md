@@ -12,6 +12,11 @@ to 64 KiB and must match the request ID. Errors exclude server response bodies a
 credential-bearing endpoints. Redirects, proxy discovery and connection reuse are
 disabled; request bodies cannot be replayed by the HTTP transport.
 
+`Batch` sends up to 100 uniquely named requests in one exchange with the same transport
+guarantees, a response budget of 4 KiB per request (at least 64 KiB), and succeeds only
+when every request has exactly one matching success receipt, in any order. Bitcoin Core
+runs batched requests individually: a batch is neither atomic nor a consistent snapshot.
+
 The library does not provision credentials, retry mutations, decide target admission,
 poll on a schedule or account for execution. A timeout does not establish that a
 server-side mutation stopped. Callers retain their own uncertainty and receipt policy.

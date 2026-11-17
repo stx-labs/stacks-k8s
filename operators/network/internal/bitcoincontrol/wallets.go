@@ -177,6 +177,9 @@ func (w *Worker) observe(
 	return observation, pending, nil
 }
 
+// maxObservedOutputs bounds one wallet's mature-output sample to a single coinbase batch.
+const maxObservedOutputs = bitcoinrpc.MaxBatchRequests
+
 // observeWallet plans named watch-only wallet convergence without issuing mutations.
 func (w *Worker) observeWallet(
 	ctx context.Context,
@@ -285,32 +288,36 @@ func (w *Worker) observeWallet(
 		local,
 		"wallet-maturity",
 		bitcoinrpc.MethodListUnspent,
-		[]any{101, 9999999, []string{wallet.Address}, false, map[string]any{"maximumCount": 100}},
+		[]any{101, 9999999, []string{wallet.Address}, false, map[string]any{"maximumCount": maxObservedOutputs}},
 		&outputs,
 	); e != nil {
 		return state, nil, e
 	}
-	if len(outputs) > 100 {
+	if len(outputs) > maxObservedOutputs {
 		return state, nil, fmt.Errorf("wallet output observation exceeds bound")
 	}
-	for _, output := range outputs {
+	// One exchange regardless of output count, so observation latency does not scale with
+	// network round-trip time per output.
+	coins := make([]struct {
+		Coinbase      *bool `json:"coinbase"`
+		Confirmations int64 `json:"confirmations"`
+	}, len(outputs))
+	requests := make([]bitcoinrpc.Request, len(outputs))
+	for i, output := range outputs {
 		if output.Address != wallet.Address || output.Confirmations < 101 || !hashValid(output.TxID) {
 			return state, nil, fmt.Errorf("mature output identity incomplete")
 		}
-		var coin struct {
-			Coinbase      *bool `json:"coinbase"`
-			Confirmations int64 `json:"confirmations"`
+		requests[i] = bitcoinrpc.Request{
+			ID:     fmt.Sprintf("wallet-coinbase-%d", i),
+			Method: bitcoinrpc.MethodGetTxOut,
+			Params: []any{output.TxID, output.Vout, true},
+			Result: &coins[i],
 		}
-		if e := w.RPC.Call(
-			ctx,
-			endpoint,
-			"wallet-coinbase",
-			bitcoinrpc.MethodGetTxOut,
-			[]any{output.TxID, output.Vout, true},
-			&coin,
-		); e != nil {
-			return state, nil, e
-		}
+	}
+	if e := w.RPC.Batch(ctx, endpoint, requests); e != nil {
+		return state, nil, e
+	}
+	for _, coin := range coins {
 		if coin.Coinbase == nil || coin.Confirmations < 101 {
 			return state, nil, fmt.Errorf("mature coinbase observation unavailable")
 		}
