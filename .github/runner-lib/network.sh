@@ -31,14 +31,18 @@ highest() {
 }
 # Heights from operator status (the network's burnchainObservations stay empty until
 # initialization completes): Bitcoin nodes' tip, the burn and Stacks heights Stacks nodes
-# have processed, Bitcoin initialization phase/reason, and ready/total Pods per participant
-# kind with total restarts.
+# have processed, Bitcoin initialization phase/reason, the cadence (interval@fromHeight) that
+# set the current opportunity anchor, and ready/total Pods per participant kind with total
+# restarts.
 progress() {
-  local btc init burn stx pods
+  local btc init cadence burn stx pods
   btc="$(highest bitcoinexecutions.bitcoin.stacks.org observation.height)"
   init="$(kn get bitcoininitializations.bitcoin.stacks.org \
     -o jsonpath='{range .items[*]}{.status.phase}/{.status.reason}{","}{end}' 2>/dev/null)"
   init="${init%,}"
+  cadence="$(kn get bitcoininitializations.bitcoin.stacks.org \
+    -o jsonpath='{range .items[*]}{.status.cadence.cadence.interval}@{.status.cadence.fromHeight}{","}{end}' 2>/dev/null)"
+  cadence="${cadence%,}"
   burn="$(highest stacksnetworkparticipants runtime.protocol.burnHeight)"
   stx="$(highest stacksnetworkparticipants runtime.protocol.stacksHeight)"
   pods="$(kn get pods -o jsonpath='{range .items[*]}{.metadata.labels.network\.stacks\.org/participant-kind}{"\t"}{.status.phase}{"\t"}{.status.containerStatuses[*].ready}{"\t"}{.status.containerStatuses[*].restartCount}{"\n"}{end}' 2>/dev/null |
@@ -48,7 +52,7 @@ progress() {
       }
       END { for (k in total) printf "%s=%d/%d\n", k, ready[k], total[k]; printf "~restarts=%d\n", restarts }' |
     sort | tr -d '~' | paste -sd' ' -)"
-  echo "bitcoin=${btc:--} init=${init:--} burn=${burn:--} stacks=${stx:--} $pods"
+  echo "bitcoin=${btc:--} init=${init:--} cadence=${cadence:--} burn=${burn:--} stacks=${stx:--} $pods"
 }
 # Evidence is lost with the namespace and the runner: save it before teardown or on failure.
 collect() {
