@@ -26,14 +26,14 @@ done
   echo
   echo "Request counts are aggregate API server workload (all clients) during resolution."
   echo
-  echo "| Round | Operator | Resolved (s) | Requests | Network GETs | 409 conflicts |"
+  echo "| Round | Operator | Resolved (s) | Requests | Network GETs | 409 responses |"
   echo "| --- | --- | --- | --- | --- | --- |"
   for round in "${rounds[@]}"; do
     read -r n placement _ <<< "$round"
     # shellcheck disable=SC1090,SC2154 # Keys written by network.sh.
     (
       . "$OUT/round-$n-$placement/resolved.env"
-      echo "| $n | $placement | $resolved_seconds | $aggregate_requests | $aggregate_network_gets | $aggregate_conflicts |"
+      echo "| $n | $placement | $resolved_seconds | $aggregate_requests | $aggregate_network_gets | $aggregate_409s |"
     )
   done
   echo

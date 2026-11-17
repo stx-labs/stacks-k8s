@@ -29,10 +29,12 @@ on:
         options: ['0', '30', '60', '90']
         default: '0'
       operator_node:
-        description: Where the network operator runs in network mode; server is next to the API server
+        description: >-
+          Where the network operator runs in network mode: server (next to the API server, routine)
+          or agent (remote from it, a latency regression scenario)
         type: choice
-        options: [agent, server]
-        default: agent
+        options: [server, agent]
+        default: server
       mode:
         description: network runs the example; placement compares resolution with the operator on agent-1, server, agent-1
         type: choice
@@ -90,8 +92,12 @@ jobs:
           helm --kubeconfig "$KCFG" --kube-context "$CTX" upgrade --install network charts/stacks-network-operator \
             --namespace stacks-network-system --create-namespace --wait --timeout 5m \
             --set image.tag=ci --set bitcoinObserverImage=stacks-network-operator:ci
+          # Experiment-only direct-read accounting (operators/network/internal/apiaccounting).
+          kubectl --kubeconfig "$KCFG" -n stacks-network-system set env deployment/network \
+            STACKS_API_ACCOUNTING_INTERVAL=5s
+          kubectl --kubeconfig "$KCFG" -n stacks-network-system rollout status deployment network --timeout 5m
       - name: Place operator on the server
-        if: inputs.mode != 'placement' && inputs.operator_node == 'server'
+        if: inputs.mode != 'placement' && inputs.operator_node != 'agent'
         run: .github/k3s-runners/place-operator.sh "$SERVER_HOST"
       - name: Dashboard
         run: .github/k3s-runners/dashboard.sh "$KCFG" "$CTX"

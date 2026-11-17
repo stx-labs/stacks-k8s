@@ -12,6 +12,7 @@ import (
 	bitcoin "github.com/cylewitruk-stacks/stacks-k8s/apis/network/bitcoin/v1alpha2"
 	stacks "github.com/cylewitruk-stacks/stacks-k8s/apis/network/stacks/v1alpha2"
 	api "github.com/cylewitruk-stacks/stacks-k8s/apis/network/v1alpha2"
+	"github.com/cylewitruk-stacks/stacks-k8s/operators/network/internal/apiaccounting"
 	"github.com/cylewitruk-stacks/stacks-k8s/operators/network/internal/bitcoincontrol"
 	"github.com/cylewitruk-stacks/stacks-k8s/operators/network/internal/faucetrequest"
 	"github.com/cylewitruk-stacks/stacks-k8s/operators/network/internal/foundation"
@@ -177,6 +178,10 @@ func run(
 		},
 	)
 	if err != nil {
+		return err
+	}
+	// Experiment-only: covers every GetAPIReader caller, including registration helpers.
+	if manager, err = apiaccounting.Wrap(manager); err != nil {
 		return err
 	}
 	for name, object := range map[string]client.Object{

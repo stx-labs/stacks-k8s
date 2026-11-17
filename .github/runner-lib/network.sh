@@ -80,6 +80,40 @@ request_delta() {
       }
       END { for (k in n) print n[k], k }' | sort -rn
 }
+# Experiment-only operator builds log cumulative direct-read totals ("api-accounting") at
+# startup and every interval. Prints, for the operator's current Pod, the difference
+# between the last snapshot at or before START and the first at or after END (RFC 3339):
+# a "# window" line with both snapshot times and their offsets from START and END (the
+# window covers reads on both sides of the requested span), then
+# "count seconds VERB Kind outcome helper <- entry" rows, largest first. Prints nothing
+# when the operator logs no snapshots, and an explicit "# incomplete" line when no snapshot
+# closes the window. Seconds are summed client call durations, which overlap across
+# concurrent controllers.
+operator_reads() {
+  k -n stacks-network-system logs deploy/network --tail=-1 2>/dev/null |
+    jq -c 'select(.logger == "api-accounting") | {ts, series}' 2>/dev/null |
+    jq -rs --arg start "$1" --arg end "$2" '
+      def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+      def totals: map({key: ([.verb, .kind, .outcome, (.helper // "-"), (.entry // "-")] | join(" ")),
+        value: [.count, .seconds]}) | from_entries;
+      if length == 0 then empty else
+        (map(select(.ts <= $start)) | last) as $first
+        | (map(select(.ts >= $end)) | first) as $last
+        | if $last == null then "# incomplete: no api-accounting snapshot at or after \($end)" else
+            ($first // {ts: "operator start", series: []}) as $first
+            | "# window: \($first.ts)" +
+                (if $first.series == [] and $first.ts == "operator start" then ""
+                 else " (\(($start | epoch) - ($first.ts | epoch))s before apply)" end) +
+                " to \($last.ts) (\(($last.ts | epoch) - ($end | epoch))s after Resolved)",
+              ( ($first.series | totals) as $before
+                | [$last.series | totals | to_entries[]
+                    | [.value[0] - ($before[.key][0] // 0), .value[1] - ($before[.key][1] // 0), .key]
+                    | select(.[0] > 0)]
+                | sort_by(-.[0])[]
+                | "\(.[0]) \(.[1] * 10 | round / 10) \(.[2] | sub(" (?<h>[^ ]+) (?<e>[^ ]+)$"; " \(.h) <- \(.e)"))" )
+          end
+      end'
+}
 hold() {
   (( HOLD_SECONDS > 0 )) || return 0
   local deadline=$(( $(date +%s) + HOLD_SECONDS ))
@@ -109,19 +143,28 @@ awk -v workers="$WORKER_NODES" -v workers2="$WORKER2_NODES" -v control="$NODE_CO
   { print }' "$EXAMPLE" > "$OUT/network-manifest.yaml"
 
 requests > "$OUT/requests-before.txt"
+applied_at="$(date -u +%FT%TZ)"
 k apply -f "$OUT/network-manifest.yaml" >/dev/null
 applied=$(date +%s)
 kn wait stacksnetwork/network --for=jsonpath='{.status.conditions[?(@.type=="Resolved")].status}'=True \
   --timeout="${RESOLVE_TIMEOUT}s"
+resolved_at="$(date -u +%FT%TZ)"
 echo "resolved_seconds=$(( $(date +%s) - applied ))" | tee "$OUT/resolved.env"
 requests > "$OUT/requests-resolved.txt"
 request_delta "$OUT/requests-before.txt" "$OUT/requests-resolved.txt" > "$OUT/resolution-requests.txt"
 # Aggregate API server workload during resolution, summed over every client: not per-pass
 # or per-controller timing.
-awk '{ total += $1; if ($2 == "GET" && $3 == "stacksnetworks") gets += $1; if ($4 == 409) conflicts += $1 }
-  END { printf "aggregate_requests=%d\naggregate_network_gets=%d\naggregate_conflicts=%d\n", total, gets, conflicts }' \
+awk '{ total += $1; if ($2 == "GET" && $3 == "stacksnetworks") gets += $1; if ($4 == 409) responses409 += $1 }
+  END { printf "aggregate_requests=%d\naggregate_network_gets=%d\naggregate_409s=%d\n", total, gets, responses409 }' \
   "$OUT/resolution-requests.txt" | tee -a "$OUT/resolved.env"
 head -8 "$OUT/resolution-requests.txt"
+# Let the operator log the snapshot that closes the resolution window (5s interval in CI).
+sleep 7
+operator_reads "$applied_at" "$resolved_at" > "$OUT/operator-reads.txt"
+if [ -s "$OUT/operator-reads.txt" ]; then
+  echo "operator direct reads (count, summed call seconds, verb, kind, outcome, call site):"
+  head -14 "$OUT/operator-reads.txt"
+fi
 echo "$(stamp) resolved: $(conditions)"
 if [ "$RESOLVE_ONLY" = true ]; then
   collect
