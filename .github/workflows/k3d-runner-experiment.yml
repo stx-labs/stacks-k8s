@@ -82,7 +82,7 @@ jobs:
             --namespace stacks-network-system --create-namespace --wait --timeout 5m \
             --set image.tag=ci --set bitcoinObserverImage=stacks-network-operator:ci
       - name: Minimal network
-        run: .github/runner-lib/minimal-network.sh "$KCFG" "$CTX" network-out
+        run: .github/runner-lib/network.sh docs/design/public-api/examples/minimal.yaml "$KCFG" "$CTX" network-out
       - name: Diagnostics
         if: failure()
         run: |

@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# Usage: minimal-network.sh KUBECONFIG CONTEXT OUTPUT_DIR
-# Runs the public minimal example: apply paused, start, wait for initialization,
-# sample native progress, then dispose in the documented order. NODE_WORKER,
-# NODE_WORKER2 and NODE_CONTROL_PLANE replace the example's kind node names
+# Usage: network.sh EXAMPLE KUBECONFIG CONTEXT OUTPUT_DIR
+# Runs a public StacksNetwork example (e.g. docs/design/public-api/examples/minimal.yaml):
+# apply paused, start, wait for initialization, sample native progress, then dispose in
+# the documented order. The example's kind node pins are mapped onto this cluster:
+# stacks-k8s-worker and stacks-k8s-worker2 pins rotate through the space-separated
+# WORKER_NODES and WORKER2_NODES, and stacks-k8s-control-plane becomes NODE_CONTROL_PLANE
 # (defaults: the local k3d cluster). INIT_TIMEOUT bounds initialization in seconds
-# (default 1200: about twice a single runner's ~600s). HOLD_SECONDS (default 0) keeps the
-# network up for live inspection before teardown, also after a failure; creating
-# HOLD_RELEASE ends the hold early.
+# (default 1200: about twice a single runner's ~600s for the minimal example).
+# HOLD_SECONDS (default 0) keeps the network up for live inspection before teardown, also
+# after a failure; creating HOLD_RELEASE ends the hold early.
 set -euo pipefail
-KCFG=$1 CTX=$2 OUT=$3 NS=lab-minimal
-NODE_WORKER=${NODE_WORKER:-k3d-stacks-k8s-agent-0}
-NODE_WORKER2=${NODE_WORKER2:-k3d-stacks-k8s-agent-1}
+EXAMPLE=$1 KCFG=$2 CTX=$3 OUT=$4
+NS="$(awk '/^kind: StacksNetwork$/ { found = 1 } found && /^  namespace:/ { print $2; exit }' "$EXAMPLE")"
+WORKER_NODES=${WORKER_NODES:-k3d-stacks-k8s-agent-0}
+WORKER2_NODES=${WORKER2_NODES:-k3d-stacks-k8s-agent-1}
 NODE_CONTROL_PLANE=${NODE_CONTROL_PLANE:-k3d-stacks-k8s-server-0}
 INIT_TIMEOUT=${INIT_TIMEOUT:-1200}
 HOLD_SECONDS=${HOLD_SECONDS:-0}
@@ -71,12 +74,14 @@ trap on_exit EXIT
 mkdir -p "$OUT"
 
 # Map the kind node names in the example onto this cluster.
-sed -e "s/hostname: stacks-k8s-worker2$/hostname: $NODE_WORKER2/" \
-  -e "s/hostname: stacks-k8s-worker$/hostname: $NODE_WORKER/" \
-  -e "s/hostname: stacks-k8s-control-plane$/hostname: $NODE_CONTROL_PLANE/" \
-  docs/design/public-api/examples/minimal.yaml > "$OUT/minimal.yaml"
+awk -v workers="$WORKER_NODES" -v workers2="$WORKER2_NODES" -v control="$NODE_CONTROL_PLANE" '
+  BEGIN { n = split(workers, w, " "); n2 = split(workers2, w2, " ") }
+  /hostname: stacks-k8s-worker$/ { sub(/stacks-k8s-worker$/, w[i++ % n + 1]) }
+  /hostname: stacks-k8s-worker2$/ { sub(/stacks-k8s-worker2$/, w2[j++ % n2 + 1]) }
+  /hostname: stacks-k8s-control-plane$/ { sub(/stacks-k8s-control-plane$/, control) }
+  { print }' "$EXAMPLE" > "$OUT/network-manifest.yaml"
 
-k apply -f "$OUT/minimal.yaml" >/dev/null
+k apply -f "$OUT/network-manifest.yaml" >/dev/null
 kn wait stacksnetwork/network --for=jsonpath='{.status.conditions[?(@.type=="Resolved")].status}'=True --timeout=5m
 echo "$(stamp) resolved: $(conditions)"
 
@@ -93,7 +98,7 @@ until [[ "$last" == *Initialized=True* ]]; do
 done
 echo "initialized_seconds=$(( $(date +%s) - start ))" | tee "$OUT/initialized.env"
 
-rpc=$(kn get svc -o name | grep stacksnode-node-01-rpc | cut -d/ -f2)
+rpc=$(kn get svc -o name | grep -m1 -E 'stacksnode-.+-rpc' | cut -d/ -f2)
 info() { k get --raw "/api/v1/namespaces/$NS/services/$rpc:20443/proxy/v2/info" | jq -c '{burn: .burn_block_height, stacks: .stacks_tip_height}'; }
 echo "$(stamp) progress $(info)"
 sleep 60

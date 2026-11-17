@@ -2,7 +2,7 @@ name: k3s multi-runner experiment
 
 # Experiment: one k3s cluster spanning several GitHub-hosted runners, joined over
 # Tailscale. Measures join time, Tailscale paths, pod RTT and throughput across runners,
-# then runs the public minimal StacksNetwork across them.
+# then runs a public StacksNetwork example (minimal by default) across them.
 # Requires repository variables TS_OAUTH_CLIENT_ID and TS_AUDIENCE from a Tailscale
 # OpenID Connect trust credential (auth_keys write on tag:ci), and a random
 # K3S_TOKEN_SALT secret. The tailnet policy should let tag:ci reach only tag:ci.
@@ -18,6 +18,11 @@ on:
       - .github/runner-lib/**
   workflow_dispatch:
     inputs:
+      example:
+        description: Public StacksNetwork example under docs/design/public-api/examples
+        type: choice
+        options: [minimal, 30-actors]
+        default: minimal
       hold:
         description: Minutes to keep the network up for inspection before teardown
         type: choice
@@ -36,6 +41,7 @@ env:
   AGENTS: 4
   SERVER_HOST: k3s-${{ github.run_id }}-${{ github.run_attempt }}-server
   TOKEN_SEED: ${{ github.run_id }}-${{ github.run_attempt }}-${{ secrets.K3S_TOKEN_SALT }}
+  EXAMPLE: ${{ inputs.example || 'minimal' }}
   HOLD_MINUTES: ${{ inputs.hold || '0' }}
   HOLD_RELEASE: /tmp/stacks-k8s-release
 
@@ -43,8 +49,9 @@ jobs:
   server:
     name: Server
     runs-on: ubuntu-24.04
-    # Expressions have no arithmetic: 45 minutes plus the selected hold.
-    timeout-minutes: ${{ inputs.hold == '90' && 135 || inputs.hold == '60' && 105 || inputs.hold == '30' && 75 || 45 }}
+    # Expressions have no arithmetic: 70 minutes (setup, up to 40 minutes of
+    # initialization, teardown) plus the selected hold.
+    timeout-minutes: ${{ inputs.hold == '90' && 160 || inputs.hold == '60' && 130 || inputs.hold == '30' && 100 || 70 }}
     env:
       KCFG: /etc/rancher/k3s/k3s.yaml
       CTX: default
@@ -73,24 +80,28 @@ jobs:
             --namespace stacks-network-system --create-namespace --wait --timeout 5m \
             --set image.tag=ci --set bitcoinObserverImage=stacks-network-operator:ci
       - name: Dashboard
-        run: |
-          set -o pipefail
-          .github/k3s-runners/dashboard.sh "$KCFG" "$CTX" | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Minimal network
+        run: .github/k3s-runners/dashboard.sh "$KCFG" "$CTX"
+      - name: Network (${{ env.EXAMPLE }})
         env:
-          NODE_WORKER: k3s-${{ github.run_id }}-${{ github.run_attempt }}-agent-1
-          NODE_WORKER2: k3s-${{ github.run_id }}-${{ github.run_attempt }}-agent-2
+          NODE_PREFIX: k3s-${{ github.run_id }}-${{ github.run_attempt }}
           NODE_CONTROL_PLANE: ${{ env.SERVER_HOST }}
         run: |
           set -o pipefail
-          HOLD_SECONDS=$(( HOLD_MINUTES * 60 )) \
-            .github/runner-lib/minimal-network.sh "$KCFG" "$CTX" out/network | tee out/network.log
+          # The minimal example keeps its earlier placement; 30-actors spreads over all agents.
+          if [ "$EXAMPLE" = 30-actors ]; then
+            export WORKER_NODES="$NODE_PREFIX-agent-1 $NODE_PREFIX-agent-3"
+            export WORKER2_NODES="$NODE_PREFIX-agent-2 $NODE_PREFIX-agent-4" INIT_TIMEOUT=2400
+          else
+            export WORKER_NODES="$NODE_PREFIX-agent-1" WORKER2_NODES="$NODE_PREFIX-agent-2"
+          fi
+          HOLD_SECONDS=$(( HOLD_MINUTES * 60 )) .github/runner-lib/network.sh \
+            "docs/design/public-api/examples/$EXAMPLE.yaml" "$KCFG" "$CTX" out/network | tee out/network.log
       - name: Diagnostics
         if: always()
         run: |
           mkdir -p out
           kubectl --kubeconfig "$KCFG" get nodes,pods -A -o wide > out/cluster.txt 2>&1 || true
-          kubectl --kubeconfig "$KCFG" -n lab-minimal get stacksnetwork network -o yaml > out/network-status.yaml 2>&1 || true
+          kubectl --kubeconfig "$KCFG" get stacksnetworks -A -o yaml > out/network-status.yaml 2>&1 || true
           kubectl --kubeconfig "$KCFG" get events -A --sort-by=.lastTimestamp > out/events.txt 2>&1 || true
           kubectl --kubeconfig "$KCFG" -n stacks-network-system logs deploy/network --tail=-1 > out/operator.log 2>&1 || true
           tailscale status > out/tailscale-status.txt 2>&1 || true
@@ -101,6 +112,25 @@ jobs:
           name: server
           path: out
 
+  # Publishes live-access details as soon as the dashboard is up; a job summary appears
+  # only when its job ends.
+  access:
+    name: Access
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
+        with:
+          oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ vars.TS_AUDIENCE }}
+          tags: tag:ci
+          hostname: k3s-${{ github.run_id }}-${{ github.run_attempt }}-access
+      - name: Live cluster
+        run: |
+          set -o pipefail
+          .github/k3s-runners/access.sh | tee -a "$GITHUB_STEP_SUMMARY"
+
   agent:
     name: Agent ${{ matrix.index }}
     strategy:
@@ -108,7 +138,7 @@ jobs:
       matrix:
         index: [1, 2, 3, 4]
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.hold == '90' && 135 || inputs.hold == '60' && 105 || inputs.hold == '30' && 75 || 45 }}
+    timeout-minutes: ${{ inputs.hold == '90' && 160 || inputs.hold == '60' && 130 || inputs.hold == '30' && 100 || 70 }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
@@ -122,7 +152,7 @@ jobs:
       - run: .github/k3s-runners/load-operator-image.sh
       - run: .github/k3s-runners/k3s-node.sh agent
       - name: Hold until the server finishes
-        run: .github/k3s-runners/hold-agent.sh $(( 2400 + HOLD_MINUTES * 60 ))
+        run: .github/k3s-runners/hold-agent.sh $(( 3900 + HOLD_MINUTES * 60 ))
       - name: Agent log
         if: always()
         run: sudo journalctl -u k3s --no-pager | tail -100 || true
