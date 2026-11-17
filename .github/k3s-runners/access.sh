@@ -12,14 +12,17 @@ until ip="$(tailscale ip -4 "$SERVER_HOST" 2>/dev/null)" && curl -sf -o /dev/nul
   (( $(date +%s) - started < limit )) || { echo "dashboard on $SERVER_HOST did not answer" >&2; exit 1; }
   sleep 10
 done
+# Runner host keys are ephemeral, and Tailscale already authenticates the node behind the
+# address, so these commands neither prompt for nor store them.
+ssh="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR runner@$ip"
 cat <<EOF
 ### Live cluster (tailnet only)
 
 | What | How |
 | --- | --- |
 | Dashboard | http://$ip:8080 |
-| Shell | \`ssh runner@$ip\` |
-| Dashboard token (to clipboard) | \`ssh runner@$ip sudo k3s kubectl -n headlamp create token headlamp \\| tr -d '\\n' \\| pbcopy\` |
-| End a hold early | \`ssh runner@$ip touch $HOLD_RELEASE\` |
+| Shell | \`$ssh\` |
+| Dashboard token (to clipboard) | \`$ssh sudo k3s kubectl -n headlamp create token headlamp \\| tr -d '\\n' \\| pbcopy\` |
+| End a hold early | \`$ssh touch $HOLD_RELEASE\` |
 
 EOF
