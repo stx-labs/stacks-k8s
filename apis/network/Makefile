@@ -1,6 +1,6 @@
 GO ?= go
 GO_ISOLATED ?= GOWORK=off $(GO)
-CONTROLLER_GEN ?= $(GO_ISOLATED) run -modfile=tools/go.mod sigs.k8s.io/controller-tools/cmd/controller-gen
+CONTROLLER_GEN ?= $(GO_ISOLATED) tool -modfile=tools/go.mod controller-gen
 ACTION_CRD_DIR ?= ../../charts/stacks-action-operator/crds
 CRD_DIR ?= ../../charts/stacks-network-operator/crds
 FOUNDATION_PATHS := paths=./common/v1alpha2/... paths=./v1alpha2/... paths=./bitcoin/v1alpha2/... paths=./stacks/v1alpha2/...

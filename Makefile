@@ -19,8 +19,8 @@ MODULE_DIRS := \
 	tools/module-policy \
 	tools/local-cluster
 
-# Generator-only modules contain tools-tagged imports of command packages, not
-# lintable Go packages. Their source is still covered by fmt-check.
+# Generator-only modules pin tools via go.mod tool directives and contain no
+# lintable Go packages.
 LINT_MODULE_DIRS := $(filter-out apis/network/tools operators/observability/tools,$(MODULE_DIRS))
 LINT_CONFIG := $(CURDIR)/.golangci.yml
 

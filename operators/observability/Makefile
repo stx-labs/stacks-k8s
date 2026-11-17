@@ -1,6 +1,6 @@
 GO ?= go
 GO_ISOLATED ?= GOWORK=off $(GO)
-CONTROLLER_GEN ?= $(GO_ISOLATED) run -modfile=tools/go.mod sigs.k8s.io/controller-tools/cmd/controller-gen
+CONTROLLER_GEN ?= $(GO_ISOLATED) tool -modfile=tools/go.mod controller-gen
 CRD_DIR ?= ../../charts/stacks-observability-operator/crds
 
 .PHONY: fmt generate test test-race vet verify
