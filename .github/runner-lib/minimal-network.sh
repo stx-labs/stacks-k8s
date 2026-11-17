@@ -3,12 +3,14 @@
 # Runs the public minimal example: apply paused, start, wait for initialization,
 # sample native progress, then dispose in the documented order. NODE_WORKER,
 # NODE_WORKER2 and NODE_CONTROL_PLANE replace the example's kind node names
-# (defaults: the local k3d cluster).
+# (defaults: the local k3d cluster). INIT_TIMEOUT bounds initialization in seconds
+# (default 1200: about twice a single runner's ~600s).
 set -euo pipefail
 KCFG=$1 CTX=$2 OUT=$3 NS=lab-minimal
 NODE_WORKER=${NODE_WORKER:-k3d-stacks-k8s-agent-0}
 NODE_WORKER2=${NODE_WORKER2:-k3d-stacks-k8s-agent-1}
 NODE_CONTROL_PLANE=${NODE_CONTROL_PLANE:-k3d-stacks-k8s-server-0}
+INIT_TIMEOUT=${INIT_TIMEOUT:-1200}
 k() { kubectl --kubeconfig "$KCFG" --context "$CTX" "$@"; }
 kn() { k -n "$NS" "$@"; }
 stamp() { date -u +%H:%M:%S; }
@@ -19,10 +21,14 @@ highest() {
 }
 # Heights from operator status (the network's burnchainObservations stay empty until
 # initialization completes): Bitcoin nodes' tip, the burn and Stacks heights Stacks nodes
-# have processed, and ready/total Pods per participant kind with total restarts.
+# have processed, Bitcoin initialization phase/reason, and ready/total Pods per participant
+# kind with total restarts.
 progress() {
-  local btc burn stx pods
+  local btc init burn stx pods
   btc="$(highest bitcoinexecutions.bitcoin.stacks.org observation.height)"
+  init="$(kn get bitcoininitializations.bitcoin.stacks.org \
+    -o jsonpath='{range .items[*]}{.status.phase}/{.status.reason}{","}{end}' 2>/dev/null)"
+  init="${init%,}"
   burn="$(highest stacksnetworkparticipants runtime.protocol.burnHeight)"
   stx="$(highest stacksnetworkparticipants runtime.protocol.stacksHeight)"
   pods="$(kn get pods -o jsonpath='{range .items[*]}{.metadata.labels.network\.stacks\.org/participant-kind}{"\t"}{.status.phase}{"\t"}{.status.containerStatuses[*].ready}{"\t"}{.status.containerStatuses[*].restartCount}{"\n"}{end}' 2>/dev/null |
@@ -32,7 +38,7 @@ progress() {
       }
       END { for (k in total) printf "%s=%d/%d\n", k, ready[k], total[k]; printf "~restarts=%d\n", restarts }' |
     sort | tr -d '~' | paste -sd' ' -)"
-  echo "bitcoin=${btc:--} burn=${burn:--} stacks=${stx:--} $pods"
+  echo "bitcoin=${btc:--} init=${init:--} burn=${burn:--} stacks=${stx:--} $pods"
 }
 # Evidence is lost with the namespace and the runner: save it before teardown or on failure.
 collect() {
@@ -68,7 +74,7 @@ start=$(date +%s)
 echo "$(stamp) running"
 last=""
 until [[ "$last" == *Initialized=True* ]]; do
-  if (( $(date +%s) - start > 2400 )); then echo "$(stamp) not initialized after 40 min"; exit 1; fi
+  if (( $(date +%s) - start > INIT_TIMEOUT )); then echo "$(stamp) not initialized after ${INIT_TIMEOUT}s"; exit 1; fi
   sleep 30
   current="$(conditions)"
   if [ "$current" != "$last" ]; then echo "$(stamp) conditions: $current"; last="$current"; fi

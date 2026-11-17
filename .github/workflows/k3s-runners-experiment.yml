@@ -33,7 +33,7 @@ jobs:
   server:
     name: Server
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 45
     env:
       KCFG: /etc/rancher/k3s/k3s.yaml
       CTX: default
@@ -91,7 +91,7 @@ jobs:
       matrix:
         index: [1, 2, 3, 4]
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
@@ -104,7 +104,7 @@ jobs:
       - run: .github/k3s-runners/load-operator-image.sh
       - run: .github/k3s-runners/k3s-node.sh agent
       - name: Hold until the server finishes
-        run: .github/k3s-runners/hold-agent.sh 3900
+        run: .github/k3s-runners/hold-agent.sh 2400
       - name: Agent log
         if: always()
         run: sudo journalctl -u k3s --no-pager | tail -100 || true
