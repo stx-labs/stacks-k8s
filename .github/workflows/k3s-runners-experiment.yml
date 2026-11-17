@@ -36,10 +36,16 @@ on:
         options: [server, agent]
         default: server
       mode:
-        description: network runs the example; placement compares resolution with the operator on agent-1, server, agent-1
+        description: >-
+          network runs the example; placement resolves it with the operator on agent-1, server, agent-1;
+          images resolves it on agent-1 with the base image, then HEAD, then base
         type: choice
-        options: [network, placement]
+        options: [network, placement, images]
         default: network
+      base_revert:
+        description: images mode only; commit whose revert from HEAD builds the base image
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -57,6 +63,7 @@ env:
   EXAMPLE: ${{ inputs.example || 'minimal' }}
   HOLD_MINUTES: ${{ inputs.hold || '0' }}
   HOLD_RELEASE: /tmp/stacks-k8s-release
+  BASE_REVERT: ${{ inputs.mode == 'images' && inputs.base_revert || '' }}
 
 jobs:
   server:
@@ -70,6 +77,8 @@ jobs:
       CTX: default
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0 # BASE_REVERT builds need the reverted commit
       - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
       - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
       - uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
@@ -80,10 +89,15 @@ jobs:
           hostname: ${{ env.SERVER_HOST }}
           args: --ssh
       - run: .github/k3s-runners/install-k3s.sh
-      - run: .github/k3s-runners/load-operator-image.sh
+      - name: Build operator images
+        run: |
+          set -o pipefail
+          mkdir -p out
+          .github/k3s-runners/load-operator-image.sh | tee out/images.txt
       - run: .github/k3s-runners/k3s-node.sh server
       - name: Measure
         run: |
+          set -o pipefail
           mkdir -p out
           .github/k3s-runners/measure.sh "$AGENTS" | tee out/measurements.md
           cat out/measurements.md >> "$GITHUB_STEP_SUMMARY"
@@ -97,25 +111,36 @@ jobs:
             STACKS_API_ACCOUNTING_INTERVAL=5s
           kubectl --kubeconfig "$KCFG" -n stacks-network-system rollout status deployment network --timeout 5m
       - name: Place operator on the server
-        if: inputs.mode != 'placement' && inputs.operator_node != 'agent'
+        if: (inputs.mode == '' || inputs.mode == 'network') && inputs.operator_node != 'agent'
         run: .github/k3s-runners/place-operator.sh "$SERVER_HOST"
       - name: Dashboard
         run: .github/k3s-runners/dashboard.sh "$KCFG" "$CTX"
       - name: Network (${{ env.EXAMPLE }})
-        if: inputs.mode != 'placement'
+        if: inputs.mode == '' || inputs.mode == 'network'
         run: |
           set -o pipefail
           . .github/k3s-runners/example-env.sh
           HOLD_SECONDS=$(( HOLD_MINUTES * 60 )) .github/runner-lib/network.sh \
             "docs/design/public-api/examples/$EXAMPLE.yaml" "$KCFG" "$CTX" out/network | tee out/network.log
-      - name: Operator placement (${{ env.EXAMPLE }})
-        if: inputs.mode == 'placement'
+      - name: Operator ${{ inputs.mode }} rounds (${{ env.EXAMPLE }})
+        if: inputs.mode == 'placement' || inputs.mode == 'images'
+        env:
+          MODE: ${{ inputs.mode }}
         run: |
           set -o pipefail
           . .github/k3s-runners/example-env.sh
-          .github/k3s-runners/placement.sh "docs/design/public-api/examples/$EXAMPLE.yaml" out/placement \
-            "$NODE_PREFIX-agent-1" "$SERVER_HOST" | tee out/placement.log
-          cat out/placement/summary.md >> "$GITHUB_STEP_SUMMARY"
+          agent="$NODE_PREFIX-agent-1" image=stacks-network-operator
+          if [ "$MODE" = placement ]; then
+            title="Operator placement"
+            rounds=("agent:$agent:$image:ci" "server:$SERVER_HOST:$image:ci" "agent:$agent:$image:ci")
+          else
+            [ -n "$BASE_REVERT" ] || { echo "images mode needs base_revert" >&2; exit 1; }
+            title="Operator image (base reverts $BASE_REVERT)"
+            rounds=("base:$agent:$image:ci-base" "head:$agent:$image:ci" "base:$agent:$image:ci-base")
+          fi
+          .github/k3s-runners/rounds.sh "docs/design/public-api/examples/$EXAMPLE.yaml" out/rounds "$title" \
+            "${rounds[@]}" | tee out/rounds.log
+          { cat out/rounds/summary.md; echo; echo '```text'; cat out/images.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Diagnostics
         if: always()
         run: |
@@ -161,6 +186,8 @@ jobs:
     timeout-minutes: ${{ inputs.hold == '90' && 175 || inputs.hold == '60' && 145 || inputs.hold == '30' && 115 || 85 }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0 # BASE_REVERT builds need the reverted commit
       - uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
         with:
           oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
