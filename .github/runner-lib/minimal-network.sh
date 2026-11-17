@@ -4,13 +4,17 @@
 # sample native progress, then dispose in the documented order. NODE_WORKER,
 # NODE_WORKER2 and NODE_CONTROL_PLANE replace the example's kind node names
 # (defaults: the local k3d cluster). INIT_TIMEOUT bounds initialization in seconds
-# (default 1200: about twice a single runner's ~600s).
+# (default 1200: about twice a single runner's ~600s). HOLD_SECONDS (default 0) keeps the
+# network up for live inspection before teardown, also after a failure; creating
+# HOLD_RELEASE ends the hold early.
 set -euo pipefail
 KCFG=$1 CTX=$2 OUT=$3 NS=lab-minimal
 NODE_WORKER=${NODE_WORKER:-k3d-stacks-k8s-agent-0}
 NODE_WORKER2=${NODE_WORKER2:-k3d-stacks-k8s-agent-1}
 NODE_CONTROL_PLANE=${NODE_CONTROL_PLANE:-k3d-stacks-k8s-server-0}
 INIT_TIMEOUT=${INIT_TIMEOUT:-1200}
+HOLD_SECONDS=${HOLD_SECONDS:-0}
+HOLD_RELEASE=${HOLD_RELEASE:-/tmp/stacks-k8s-release}
 k() { kubectl --kubeconfig "$KCFG" --context "$CTX" "$@"; }
 kn() { k -n "$NS" "$@"; }
 stamp() { date -u +%H:%M:%S; }
@@ -55,7 +59,14 @@ collect() {
       rm -f "$OUT/logs/${pod#pod/}.previous.log"
   done
 }
-on_exit() { local status=$?; if [ "$status" -ne 0 ]; then collect; fi; }
+hold() {
+  (( HOLD_SECONDS > 0 )) || return 0
+  local deadline=$(( $(date +%s) + HOLD_SECONDS ))
+  echo "$(stamp) holding up to ${HOLD_SECONDS}s for inspection; create $HOLD_RELEASE to continue"
+  until [ -e "$HOLD_RELEASE" ] || (( $(date +%s) >= deadline )); do sleep 10; done
+  echo "$(stamp) hold ended"
+}
+on_exit() { local status=$?; if [ "$status" -ne 0 ]; then collect; hold; fi; }
 trap on_exit EXIT
 mkdir -p "$OUT"
 
@@ -89,6 +100,7 @@ sleep 60
 echo "$(stamp) progress $(info)"
 k get --raw "/api/v1/namespaces/$NS/services/$rpc:20443/proxy/v2/pox" | jq -c '{epoch: .current_epoch, cycle: .current_cycle.id}'
 collect
+hold
 
 kn patch stacksnetwork network --type=merge -p '{"spec":{"operation":"Stopped"}}' >/dev/null
 kn wait stacksnetwork/network --for=jsonpath='{.status.phase}'=Stopped --timeout=5m

@@ -6,6 +6,8 @@ name: k3s multi-runner experiment
 # Requires repository variables TS_OAUTH_CLIENT_ID and TS_AUDIENCE from a Tailscale
 # OpenID Connect trust credential (auth_keys write on tag:ci), and a random
 # K3S_TOKEN_SALT secret. The tailnet policy should let tag:ci reach only tag:ci.
+# Live access (dashboard on port 8080, Tailscale SSH as runner) additionally needs a
+# policy grant and SSH rule from your members to tag:ci; the job summary has the links.
 on:
   push:
     branches:
@@ -15,6 +17,12 @@ on:
       - .github/k3s-runners/**
       - .github/runner-lib/**
   workflow_dispatch:
+    inputs:
+      hold:
+        description: Minutes to keep the network up for inspection before teardown
+        type: choice
+        options: ['0', '30', '60', '90']
+        default: '0'
 
 permissions:
   contents: read
@@ -28,12 +36,15 @@ env:
   AGENTS: 4
   SERVER_HOST: k3s-${{ github.run_id }}-${{ github.run_attempt }}-server
   TOKEN_SEED: ${{ github.run_id }}-${{ github.run_attempt }}-${{ secrets.K3S_TOKEN_SALT }}
+  HOLD_MINUTES: ${{ inputs.hold || '0' }}
+  HOLD_RELEASE: /tmp/stacks-k8s-release
 
 jobs:
   server:
     name: Server
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Expressions have no arithmetic: 45 minutes plus the selected hold.
+    timeout-minutes: ${{ inputs.hold == '90' && 135 || inputs.hold == '60' && 105 || inputs.hold == '30' && 75 || 45 }}
     env:
       KCFG: /etc/rancher/k3s/k3s.yaml
       CTX: default
@@ -47,6 +58,7 @@ jobs:
           audience: ${{ vars.TS_AUDIENCE }}
           tags: tag:ci
           hostname: ${{ env.SERVER_HOST }}
+          args: --ssh
       - run: .github/k3s-runners/install-k3s.sh
       - run: .github/k3s-runners/load-operator-image.sh
       - run: .github/k3s-runners/k3s-node.sh server
@@ -60,6 +72,10 @@ jobs:
           helm --kubeconfig "$KCFG" --kube-context "$CTX" upgrade --install network charts/stacks-network-operator \
             --namespace stacks-network-system --create-namespace --wait --timeout 5m \
             --set image.tag=ci --set bitcoinObserverImage=stacks-network-operator:ci
+      - name: Dashboard
+        run: |
+          set -o pipefail
+          .github/k3s-runners/dashboard.sh "$KCFG" "$CTX" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Minimal network
         env:
           NODE_WORKER: k3s-${{ github.run_id }}-${{ github.run_attempt }}-agent-1
@@ -67,7 +83,8 @@ jobs:
           NODE_CONTROL_PLANE: ${{ env.SERVER_HOST }}
         run: |
           set -o pipefail
-          .github/runner-lib/minimal-network.sh "$KCFG" "$CTX" out/network | tee out/network.log
+          HOLD_SECONDS=$(( HOLD_MINUTES * 60 )) \
+            .github/runner-lib/minimal-network.sh "$KCFG" "$CTX" out/network | tee out/network.log
       - name: Diagnostics
         if: always()
         run: |
@@ -91,7 +108,7 @@ jobs:
       matrix:
         index: [1, 2, 3, 4]
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: ${{ inputs.hold == '90' && 135 || inputs.hold == '60' && 105 || inputs.hold == '30' && 75 || 45 }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
@@ -100,11 +117,12 @@ jobs:
           audience: ${{ vars.TS_AUDIENCE }}
           tags: tag:ci
           hostname: k3s-${{ github.run_id }}-${{ github.run_attempt }}-agent-${{ matrix.index }}
+          args: --ssh
       - run: .github/k3s-runners/install-k3s.sh
       - run: .github/k3s-runners/load-operator-image.sh
       - run: .github/k3s-runners/k3s-node.sh agent
       - name: Hold until the server finishes
-        run: .github/k3s-runners/hold-agent.sh 2400
+        run: .github/k3s-runners/hold-agent.sh $(( 2400 + HOLD_MINUTES * 60 ))
       - name: Agent log
         if: always()
         run: sudo journalctl -u k3s --no-pager | tail -100 || true
