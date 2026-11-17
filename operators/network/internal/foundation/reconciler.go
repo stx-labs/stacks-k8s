@@ -299,15 +299,26 @@ func (r *Reconciler) reconcileTopology(ctx context.Context, req ctrl.Request) (c
 	invalid := map[string]bool{}
 	entries := append([]api.Participant(nil), root.Spec.Participants...)
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	// One direct, most-recent read of the whole namespace per pass instead of one per entry.
+	// Objects are indexed by name before any identity check, so a foreign or replaced
+	// object at an expected name is still detected below; absence means absent from this
+	// complete (unpaginated) inventory.
+	var inventory api.StacksNetworkParticipantList
+	if err := r.Reader.List(ctx, &inventory, client.InNamespace(root.Namespace)); err != nil {
+		return ctrl.Result{}, err
+	}
+	byName := make(map[string]*api.StacksNetworkParticipant, len(inventory.Items))
+	for i := range inventory.Items {
+		byName[inventory.Items[i].Name] = &inventory.Items[i]
+	}
 	for _, entry := range entries {
 		id := findIdentity(root.Status.Identities, entry.Name)
 		if id != nil && id.Removing {
 			continue
 		}
 		name := ParticipantName(string(root.UID), entry.Name)
-		instance := &api.StacksNetworkParticipant{}
-		err := r.Reader.Get(ctx, types.NamespacedName{Namespace: root.Namespace, Name: name}, instance)
-		if apierrors.IsNotFound(err) {
+		instance, found := byName[name]
+		if !found {
 			if id != nil {
 				return r.report(
 					ctx,
@@ -334,9 +345,6 @@ func (r *Reconciler) reconcileTopology(ctx context.Context, req ctrl.Request) (c
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{RequeueAfter: time.Millisecond}, nil
-		}
-		if err != nil {
-			return ctrl.Result{}, err
 		}
 		if !ownedUID(instance, root.UID) || instance.Spec.NetworkUID != root.UID ||
 			instance.Spec.ParticipantName != entry.Name ||

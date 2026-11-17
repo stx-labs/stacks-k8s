@@ -370,6 +370,7 @@ func TestFoundationSchemasAndFreeze(t *testing.T) {
 		t.Fatalf("re-add accepted: %+v", network.Status)
 	}
 	verifyStoppedRemovalAndInstanceLoss(t, ctx, c, scheme)
+	verifyParticipantInventory(t, ctx, c, scheme)
 	verifyResolutionConditions(t, ctx, c, scheme)
 	verifySharedParticipantStatus(t, ctx, c)
 	// Deleting the published artifact is catastrophic, never permission to freeze again.
