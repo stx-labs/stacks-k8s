@@ -12,6 +12,7 @@ import (
 	bitcoin "github.com/cylewitruk-stacks/stacks-k8s/apis/network/bitcoin/v1alpha2"
 	common "github.com/cylewitruk-stacks/stacks-k8s/apis/network/common/v1alpha2"
 	api "github.com/cylewitruk-stacks/stacks-k8s/apis/network/v1alpha2"
+	bitcoinrpc "github.com/cylewitruk-stacks/stacks-k8s/libs/bitcoin/rpc"
 	"github.com/cylewitruk-stacks/stacks-k8s/libs/stacks/identity"
 	"github.com/cylewitruk-stacks/stacks-k8s/operators/network/internal/foundation"
 	appsv1 "k8s.io/api/apps/v1"
@@ -41,6 +42,12 @@ type fakeRPC struct {
 	fail                     bool
 	wait                     <-chan struct{}
 	after                    func()
+	// matureOutputs is the modeled mature coinbase count once height reaches 101 (default 1).
+	matureOutputs int
+	// spent and nonCoinbase alter gettxout receipts by transaction ID.
+	spent, nonCoinbase map[string]bool
+	// exchanges counts native round trips: one per Call or Batch.
+	exchanges int
 }
 
 func (f *fakeRPC) Check(context.Context, string, string) error { return nil }
@@ -82,6 +89,25 @@ func (f *fakeRPC) generate(ctx context.Context, call string, count int) (string,
 func (f *fakeRPC) Call(_ context.Context, _, _, method string, args []any, out any) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.exchanges++
+	return f.respond(method, args, out)
+}
+
+// Batch answers every request within one counted exchange.
+func (f *fakeRPC) Batch(_ context.Context, _ string, requests []bitcoinrpc.Request) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.exchanges++
+	for _, request := range requests {
+		if e := f.respond(request.Method, request.Params, request.Result); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+// respond models one native method; callers hold mu.
+func (f *fakeRPC) respond(method string, args []any, out any) error {
 	var value any
 	switch method {
 	case "getblockchaininfo":
@@ -115,19 +141,27 @@ func (f *fakeRPC) Call(_ context.Context, _, _, method string, args []any, out a
 			value = map[string]any{"descriptors": []any{map[string]string{"desc": testDescriptor + "#checksum"}}}
 		}
 	case "listunspent":
-		value = []any{}
-		if f.height >= 101 {
-			value = []any{
-				map[string]any{
+		outputs := []any{}
+		for i := range max(f.matureOutputs, 1) {
+			if f.height >= 101 {
+				outputs = append(outputs, map[string]any{
 					"address":       testAddress,
 					"confirmations": f.height,
-					"txid":          fmt.Sprintf("%064x", 1),
+					"txid":          fmt.Sprintf("%064x", i+1),
 					"vout":          0,
-				},
+				})
 			}
 		}
+		value = outputs
 	case "gettxout":
-		value = map[string]any{"coinbase": true, "confirmations": f.height}
+		switch txid := args[0].(string); {
+		case f.spent[txid]:
+			value = nil // Bitcoin Core returns null for a spent or unknown output.
+		case f.nonCoinbase[txid]:
+			value = map[string]any{"coinbase": false, "confirmations": f.height}
+		default:
+			value = map[string]any{"coinbase": true, "confirmations": f.height}
+		}
 	case "createwallet":
 		f.calls = append(f.calls, method)
 		f.exists, f.loaded = true, true
@@ -609,6 +643,51 @@ func TestWalletMutationsUseSameAuthority(t *testing.T) {
 	}
 	if record.Status.Reservation == nil || record.Status.Reservation.UID != f.initial.UID {
 		t.Fatal("receipt released shared reservation")
+	}
+}
+
+func TestWalletObservationRoundTripsDoNotScaleWithOutputs(t *testing.T) {
+	exchanges := map[int]int{}
+	for _, outputs := range []int{1, maxObservedOutputs} {
+		f := newFixture(t)
+		f.rpc.height, f.rpc.matureOutputs = 250, outputs
+		if e := f.worker.Step(t.Context()); e != nil {
+			t.Fatal(e)
+		}
+		observation := f.readRecord(t).Status.Observation
+		if observation == nil || len(observation.Wallets) != 1 ||
+			int(observation.Wallets[0].MatureOutputs) != outputs {
+			t.Fatal("mature coinbase outputs were not all verified", outputs, observation)
+		}
+		f.rpc.mu.Lock()
+		exchanges[outputs] = f.rpc.exchanges
+		f.rpc.mu.Unlock()
+	}
+	if exchanges[1] != exchanges[maxObservedOutputs] {
+		t.Fatal("native round trips scale with mature outputs", exchanges)
+	}
+}
+
+func TestWalletObservationVerifiesEveryBatchedOutput(t *testing.T) {
+	f := newFixture(t)
+	f.rpc.height, f.rpc.matureOutputs = 250, 5
+	f.rpc.nonCoinbase = map[string]bool{fmt.Sprintf("%064x", 2): true}
+	if e := f.worker.Step(t.Context()); e != nil {
+		t.Fatal(e)
+	}
+	observation := f.readRecord(t).Status.Observation
+	if observation == nil || observation.Wallets[0].MatureOutputs != 4 {
+		t.Fatal("non-coinbase output was counted or coinbase outputs were missed", observation)
+	}
+	f.rpc.mu.Lock()
+	f.rpc.spent = map[string]bool{fmt.Sprintf("%064x", 4): true}
+	f.rpc.height++
+	f.rpc.mu.Unlock()
+	if e := f.worker.Step(t.Context()); e == nil {
+		t.Fatal("spent output observation was accepted")
+	}
+	if current := f.readRecord(t).Status.Observation; current.Height != observation.Height {
+		t.Fatal("incomplete wallet observation was published", current)
 	}
 }
 

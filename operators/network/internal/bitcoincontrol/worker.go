@@ -10,6 +10,7 @@ import (
 	"time"
 
 	bitcoin "github.com/cylewitruk-stacks/stacks-k8s/apis/network/bitcoin/v1alpha2"
+	bitcoinrpc "github.com/cylewitruk-stacks/stacks-k8s/libs/bitcoin/rpc"
 	"github.com/cylewitruk-stacks/stacks-k8s/operators/network/internal/objectref"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,6 +22,8 @@ import (
 type RPC interface {
 	// Call sends one named native request and validates its response envelope.
 	Call(context.Context, string, string, string, []any, any) error
+	// Batch sends uniquely named read requests in one exchange and matches every receipt.
+	Batch(context.Context, string, []bitcoinrpc.Request) error
 	// Check verifies regtest and payout validity without mutation.
 	Check(context.Context, string, string) error
 	// Generate sends exactly one block-generation request.
