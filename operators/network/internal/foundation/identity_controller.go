@@ -329,6 +329,8 @@ func DefaultAccountName(name, suffix string) string {
 }
 
 // EnsureDefaultAccount creates an independently or instance-owned generated identity.
+// An existing account is checked through c (normally cache-backed) without a create;
+// admission revalidates its current identity with uncached reads.
 func EnsureDefaultAccount(
 	ctx context.Context,
 	c client.Client,
@@ -339,6 +341,14 @@ func EnsureDefaultAccount(
 	account := &stacks.StacksAccount{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: owner.GetNamespace()},
 		Spec:       stacks.StacksAccountSpec{Key: &common.KeySource{Generate: ptr.To(true)}},
+	}
+	var current stacks.StacksAccount
+	err := c.Get(ctx, client.ObjectKeyFromObject(account), &current)
+	if err == nil {
+		return requireOwned(&current, owner)
+	}
+	if !apierrors.IsNotFound(err) {
+		return err
 	}
 	return createOwned(ctx, c, s, owner, account)
 }

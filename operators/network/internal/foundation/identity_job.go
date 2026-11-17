@@ -164,8 +164,13 @@ func createOwned(
 	if err := c.Get(ctx, client.ObjectKeyFromObject(obj), current); err != nil {
 		return err
 	}
+	return requireOwned(current, owner)
+}
+
+// requireOwned rejects an existing output that is foreign or being deleted.
+func requireOwned(current, owner client.Object) error {
 	if !ownedUID(current, owner.GetUID()) || current.GetDeletionTimestamp() != nil {
-		return fmt.Errorf("owned output unavailable or foreign: %s", obj.GetName())
+		return fmt.Errorf("owned output unavailable or foreign: %s", current.GetName())
 	}
 	return nil
 }
