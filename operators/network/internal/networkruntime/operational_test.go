@@ -104,7 +104,7 @@ func operationalFixture(
 	blocks.Status.Scheduling = &bitcoin.BitcoinSchedulingStatus{
 		PolicyDigest: blocks.Status.Admission.PolicyDigest,
 		Schedule: &bitcoin.BitcoinBlockScheduleSpec{
-			Cadence: bitcoin.Cadence{Mode: "Fixed", Interval: ptr.To(common.Duration("5s"))},
+			Cadence: &bitcoin.Cadence{Mode: "Fixed", Interval: ptr.To(common.Duration("5s"))},
 		},
 		ObservedAt:            ptr.To(metav1.NewTime(now)),
 		LastAcknowledgedAt:    ptr.To(metav1.NewTime(now.Add(-10 * time.Second))),
@@ -397,5 +397,31 @@ func TestTrafficIntervalOverflowCannotLookOperational(t *testing.T) {
 				t.Fatalf("out-of-range interval accepted: %+v", got)
 			}
 		})
+	}
+}
+
+func TestBitcoinTimingUsesSelectedHeightCadence(t *testing.T) {
+	fixed := func(interval string) bitcoin.Cadence {
+		return bitcoin.Cadence{Mode: bitcoin.CadenceFixed, Interval: ptr.To(common.Duration(interval))}
+	}
+	window := func(d time.Duration) int64 { return int64(foundation.ProgressWindow(d) / time.Second) }
+	s := &bitcoin.BitcoinSchedulingStatus{
+		Schedule: &bitcoin.BitcoinBlockScheduleSpec{Cadences: []bitcoin.HeightCadence{
+			{FromHeight: 0, Cadence: fixed("5s")},
+			{FromHeight: 282, Cadence: fixed("60s")},
+		}},
+		ProgressWindowSeconds: window(time.Minute),
+	}
+	if _, _, valid := bitcoinTiming(s); valid {
+		t.Fatal("height cadences without a selection produced a progress window")
+	}
+	s.Cadence = &bitcoin.BitcoinCadenceSelection{Cadence: fixed("60s"), FromHeight: ptr.To[int64](282)}
+	if bound, got, valid := bitcoinTiming(s); !valid || bound != time.Minute ||
+		int64(got/time.Second) != window(time.Minute) {
+		t.Fatalf("selected cadence not used: %v %v %v", bound, got, valid)
+	}
+	s.ProgressWindowSeconds = window(5 * time.Second)
+	if _, _, valid := bitcoinTiming(s); valid {
+		t.Fatal("window from a different cadence accepted")
 	}
 }

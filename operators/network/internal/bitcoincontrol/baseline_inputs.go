@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"time"
 
 	bitcoin "github.com/cylewitruk-stacks/stacks-k8s/apis/network/bitcoin/v1alpha2"
 	common "github.com/cylewitruk-stacks/stacks-k8s/apis/network/common/v1alpha2"
@@ -114,8 +113,8 @@ func resolveBaselineInputs(
 			); err != nil ||
 				schedule.UID != dep.UID ||
 				schedule.DeletionTimestamp != nil ||
-				foundation.Digest(schedule.Spec) != dep.Fingerprint ||
-				!equality.Semantic.DeepEqual(policy.Schedule, &schedule.Spec) {
+				foundation.Digest(foundation.CanonicalSchedule(schedule.Spec)) != dep.Fingerprint ||
+				!equality.Semantic.DeepEqual(*policy.Schedule, foundation.CanonicalSchedule(schedule.Spec)) {
 				return out, fmt.Errorf("admitted schedule identity unavailable")
 			}
 			snapshot := dep
@@ -176,11 +175,10 @@ func resolveBaselineInputs(
 		Admission  *api.Admission
 	}{objectref.Participant(p), p.Status.Admission})
 	out.Schedule = policy.Schedule.DeepCopy()
-	_, upper, err := cadenceBounds(out.Schedule)
-	if err != nil {
+	if err := scheduleValid(out.Schedule); err != nil {
 		return out, err
 	}
-	out.ProgressWindowSeconds = int64((foundation.ProgressWindow(upper) + time.Second - 1) / time.Second)
+	out.ProgressWindowSeconds = scheduleWindowSeconds(out.Schedule)
 	return out, nil
 }
 

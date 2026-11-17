@@ -126,7 +126,8 @@ spec:
                         description: Schedule supplies inline timing.
                         properties:
                           cadence:
-                            description: Cadence controls block opportunities.
+                            description: Cadence controls block opportunities at every
+                              height.
                             properties:
                               interval:
                                 description: Interval is the fixed duration.
@@ -173,9 +174,93 @@ spec:
                                 && !has(self.minimumInterval) && !has(self.maximumInterval))
                                 : (!has(self.interval) && has(self.minimumInterval)
                                 && has(self.maximumInterval))'
-                        required:
-                        - cadence
+                          cadences:
+                            description: |-
+                              Cadences selects timing by the freshly observed Bitcoin tip height: the entry with the
+                              greatest fromHeight not above the tip applies. Entry order is not significant. The bound
+                              keeps CEL cost estimates for schemas embedding a schedule per participant within budget
+                              (StacksNetwork exceeds it near 1000 entries) and matches other bounded lists.
+                            items:
+                              description: HeightCadence applies one cadence from
+                                a Bitcoin tip height.
+                              properties:
+                                cadence:
+                                  description: Cadence controls opportunities from
+                                    FromHeight until the next higher entry.
+                                  properties:
+                                    interval:
+                                      description: Interval is the fixed duration.
+                                      maxLength: 32
+                                      minLength: 2
+                                      type: string
+                                    maximumInterval:
+                                      description: MaximumInterval bounds uniform
+                                        timing.
+                                      maxLength: 32
+                                      minLength: 2
+                                      type: string
+                                    minimumInterval:
+                                      description: MinimumInterval bounds uniform
+                                        timing.
+                                      maxLength: 32
+                                      minLength: 2
+                                      type: string
+                                    mode:
+                                      description: Mode selects fixed or uniform timing.
+                                      enum:
+                                      - Fixed
+                                      - Uniform
+                                      type: string
+                                  required:
+                                  - mode
+                                  type: object
+                                  x-kubernetes-validations:
+                                  - message: interval must be between 1s and 1h
+                                    rule: '!has(self.interval) || (duration(self.interval)
+                                      >= duration(''1s'') && duration(self.interval)
+                                      <= duration(''1h''))'
+                                  - message: minimumInterval must be between 1s and
+                                      1h
+                                    rule: '!has(self.minimumInterval) || (duration(self.minimumInterval)
+                                      >= duration(''1s'') && duration(self.minimumInterval)
+                                      <= duration(''1h''))'
+                                  - message: maximumInterval must be between 1s and
+                                      1h
+                                    rule: '!has(self.maximumInterval) || (duration(self.maximumInterval)
+                                      >= duration(''1s'') && duration(self.maximumInterval)
+                                      <= duration(''1h''))'
+                                  - message: maximumInterval must not be below minimumInterval
+                                    rule: '!has(self.minimumInterval) || !has(self.maximumInterval)
+                                      || duration(self.maximumInterval) >= duration(self.minimumInterval)'
+                                  - message: cadence fields must match mode
+                                    rule: 'self.mode == ''Fixed'' ? (has(self.interval)
+                                      && !has(self.minimumInterval) && !has(self.maximumInterval))
+                                      : (!has(self.interval) && has(self.minimumInterval)
+                                      && has(self.maximumInterval))'
+                                fromHeight:
+                                  description: FromHeight is the lowest observed tip
+                                    height this cadence applies to.
+                                  format: int64
+                                  maximum: 4294967295
+                                  minimum: 0
+                                  type: integer
+                              required:
+                              - cadence
+                              - fromHeight
+                              type: object
+                            maxItems: 100
+                            minItems: 1
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - fromHeight
+                            x-kubernetes-list-type: map
+                            x-kubernetes-validations:
+                            - message: cadences must include fromHeight 0
+                              rule: self.exists(c, c.fromHeight == 0)
                         type: object
+                        x-kubernetes-validations:
+                        - message: select exactly one of cadence or cadences
+                          rule: has(self.cadence) != has(self.cadences)
                       scheduleRef:
                         description: ScheduleRef selects immutable reusable timing.
                         properties:
@@ -1827,7 +1912,8 @@ spec:
                             description: Schedule supplies inline timing.
                             properties:
                               cadence:
-                                description: Cadence controls block opportunities.
+                                description: Cadence controls block opportunities
+                                  at every height.
                                 properties:
                                   interval:
                                     description: Interval is the fixed duration.
@@ -1876,9 +1962,95 @@ spec:
                                     && !has(self.minimumInterval) && !has(self.maximumInterval))
                                     : (!has(self.interval) && has(self.minimumInterval)
                                     && has(self.maximumInterval))'
-                            required:
-                            - cadence
+                              cadences:
+                                description: |-
+                                  Cadences selects timing by the freshly observed Bitcoin tip height: the entry with the
+                                  greatest fromHeight not above the tip applies. Entry order is not significant. The bound
+                                  keeps CEL cost estimates for schemas embedding a schedule per participant within budget
+                                  (StacksNetwork exceeds it near 1000 entries) and matches other bounded lists.
+                                items:
+                                  description: HeightCadence applies one cadence from
+                                    a Bitcoin tip height.
+                                  properties:
+                                    cadence:
+                                      description: Cadence controls opportunities
+                                        from FromHeight until the next higher entry.
+                                      properties:
+                                        interval:
+                                          description: Interval is the fixed duration.
+                                          maxLength: 32
+                                          minLength: 2
+                                          type: string
+                                        maximumInterval:
+                                          description: MaximumInterval bounds uniform
+                                            timing.
+                                          maxLength: 32
+                                          minLength: 2
+                                          type: string
+                                        minimumInterval:
+                                          description: MinimumInterval bounds uniform
+                                            timing.
+                                          maxLength: 32
+                                          minLength: 2
+                                          type: string
+                                        mode:
+                                          description: Mode selects fixed or uniform
+                                            timing.
+                                          enum:
+                                          - Fixed
+                                          - Uniform
+                                          type: string
+                                      required:
+                                      - mode
+                                      type: object
+                                      x-kubernetes-validations:
+                                      - message: interval must be between 1s and 1h
+                                        rule: '!has(self.interval) || (duration(self.interval)
+                                          >= duration(''1s'') && duration(self.interval)
+                                          <= duration(''1h''))'
+                                      - message: minimumInterval must be between 1s
+                                          and 1h
+                                        rule: '!has(self.minimumInterval) || (duration(self.minimumInterval)
+                                          >= duration(''1s'') && duration(self.minimumInterval)
+                                          <= duration(''1h''))'
+                                      - message: maximumInterval must be between 1s
+                                          and 1h
+                                        rule: '!has(self.maximumInterval) || (duration(self.maximumInterval)
+                                          >= duration(''1s'') && duration(self.maximumInterval)
+                                          <= duration(''1h''))'
+                                      - message: maximumInterval must not be below
+                                          minimumInterval
+                                        rule: '!has(self.minimumInterval) || !has(self.maximumInterval)
+                                          || duration(self.maximumInterval) >= duration(self.minimumInterval)'
+                                      - message: cadence fields must match mode
+                                        rule: 'self.mode == ''Fixed'' ? (has(self.interval)
+                                          && !has(self.minimumInterval) && !has(self.maximumInterval))
+                                          : (!has(self.interval) && has(self.minimumInterval)
+                                          && has(self.maximumInterval))'
+                                    fromHeight:
+                                      description: FromHeight is the lowest observed
+                                        tip height this cadence applies to.
+                                      format: int64
+                                      maximum: 4294967295
+                                      minimum: 0
+                                      type: integer
+                                  required:
+                                  - cadence
+                                  - fromHeight
+                                  type: object
+                                maxItems: 100
+                                minItems: 1
+                                type: array
+                                x-kubernetes-list-map-keys:
+                                - fromHeight
+                                x-kubernetes-list-type: map
+                                x-kubernetes-validations:
+                                - message: cadences must include fromHeight 0
+                                  rule: self.exists(c, c.fromHeight == 0)
                             type: object
+                            x-kubernetes-validations:
+                            - message: select exactly one of cadence or cadences
+                              rule: has(self.cadence) != has(self.cadences)
                           scheduleRef:
                             description: ScheduleRef selects immutable reusable timing.
                             properties:
@@ -4972,6 +5144,95 @@ spec:
                     format: int64
                     minimum: 0
                     type: integer
+                  cadence:
+                    description: Cadence is the cadence selected from Schedule for
+                      the current opportunity anchor.
+                    properties:
+                      cadence:
+                        description: Cadence is the effective timing.
+                        properties:
+                          interval:
+                            description: Interval is the fixed duration.
+                            maxLength: 32
+                            minLength: 2
+                            type: string
+                          maximumInterval:
+                            description: MaximumInterval bounds uniform timing.
+                            maxLength: 32
+                            minLength: 2
+                            type: string
+                          minimumInterval:
+                            description: MinimumInterval bounds uniform timing.
+                            maxLength: 32
+                            minLength: 2
+                            type: string
+                          mode:
+                            description: Mode selects fixed or uniform timing.
+                            enum:
+                            - Fixed
+                            - Uniform
+                            type: string
+                        required:
+                        - mode
+                        type: object
+                        x-kubernetes-validations:
+                        - message: interval must be between 1s and 1h
+                          rule: '!has(self.interval) || (duration(self.interval) >=
+                            duration(''1s'') && duration(self.interval) <= duration(''1h''))'
+                        - message: minimumInterval must be between 1s and 1h
+                          rule: '!has(self.minimumInterval) || (duration(self.minimumInterval)
+                            >= duration(''1s'') && duration(self.minimumInterval)
+                            <= duration(''1h''))'
+                        - message: maximumInterval must be between 1s and 1h
+                          rule: '!has(self.maximumInterval) || (duration(self.maximumInterval)
+                            >= duration(''1s'') && duration(self.maximumInterval)
+                            <= duration(''1h''))'
+                        - message: maximumInterval must not be below minimumInterval
+                          rule: '!has(self.minimumInterval) || !has(self.maximumInterval)
+                            || duration(self.maximumInterval) >= duration(self.minimumInterval)'
+                        - message: cadence fields must match mode
+                          rule: 'self.mode == ''Fixed'' ? (has(self.interval) && !has(self.minimumInterval)
+                            && !has(self.maximumInterval)) : (!has(self.interval)
+                            && has(self.minimumInterval) && has(self.maximumInterval))'
+                      fromHeight:
+                        description: FromHeight identifies the height-selected schedule
+                          entry; omitted for a single cadence or override.
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      height:
+                        description: Height is the observed Bitcoin tip height the
+                          selection was made at, when one was observed.
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      override:
+                        description: Override identifies the active override that
+                          supplied Cadence.
+                        properties:
+                          fingerprint:
+                            description: Fingerprint identifies public content when
+                              relevant.
+                            type: string
+                          kind:
+                            description: Kind identifies the API kind or participant
+                              kind.
+                            type: string
+                          name:
+                            description: Name is the public resource name.
+                            type: string
+                          uid:
+                            description: UID prevents same-name replacement from inheriting
+                              authority.
+                            type: string
+                        required:
+                        - kind
+                        - name
+                        - uid
+                        type: object
+                    required:
+                    - cadence
+                    type: object
                   eligibleTargets:
                     description: EligibleTargets counts currently ready admitted targets
                       independently of the committed draw.
@@ -5080,7 +5341,8 @@ spec:
                         description: Schedule snapshots the effective cadence.
                         properties:
                           cadence:
-                            description: Cadence controls block opportunities.
+                            description: Cadence controls block opportunities at every
+                              height.
                             properties:
                               interval:
                                 description: Interval is the fixed duration.
@@ -5127,9 +5389,93 @@ spec:
                                 && !has(self.minimumInterval) && !has(self.maximumInterval))
                                 : (!has(self.interval) && has(self.minimumInterval)
                                 && has(self.maximumInterval))'
-                        required:
-                        - cadence
+                          cadences:
+                            description: |-
+                              Cadences selects timing by the freshly observed Bitcoin tip height: the entry with the
+                              greatest fromHeight not above the tip applies. Entry order is not significant. The bound
+                              keeps CEL cost estimates for schemas embedding a schedule per participant within budget
+                              (StacksNetwork exceeds it near 1000 entries) and matches other bounded lists.
+                            items:
+                              description: HeightCadence applies one cadence from
+                                a Bitcoin tip height.
+                              properties:
+                                cadence:
+                                  description: Cadence controls opportunities from
+                                    FromHeight until the next higher entry.
+                                  properties:
+                                    interval:
+                                      description: Interval is the fixed duration.
+                                      maxLength: 32
+                                      minLength: 2
+                                      type: string
+                                    maximumInterval:
+                                      description: MaximumInterval bounds uniform
+                                        timing.
+                                      maxLength: 32
+                                      minLength: 2
+                                      type: string
+                                    minimumInterval:
+                                      description: MinimumInterval bounds uniform
+                                        timing.
+                                      maxLength: 32
+                                      minLength: 2
+                                      type: string
+                                    mode:
+                                      description: Mode selects fixed or uniform timing.
+                                      enum:
+                                      - Fixed
+                                      - Uniform
+                                      type: string
+                                  required:
+                                  - mode
+                                  type: object
+                                  x-kubernetes-validations:
+                                  - message: interval must be between 1s and 1h
+                                    rule: '!has(self.interval) || (duration(self.interval)
+                                      >= duration(''1s'') && duration(self.interval)
+                                      <= duration(''1h''))'
+                                  - message: minimumInterval must be between 1s and
+                                      1h
+                                    rule: '!has(self.minimumInterval) || (duration(self.minimumInterval)
+                                      >= duration(''1s'') && duration(self.minimumInterval)
+                                      <= duration(''1h''))'
+                                  - message: maximumInterval must be between 1s and
+                                      1h
+                                    rule: '!has(self.maximumInterval) || (duration(self.maximumInterval)
+                                      >= duration(''1s'') && duration(self.maximumInterval)
+                                      <= duration(''1h''))'
+                                  - message: maximumInterval must not be below minimumInterval
+                                    rule: '!has(self.minimumInterval) || !has(self.maximumInterval)
+                                      || duration(self.maximumInterval) >= duration(self.minimumInterval)'
+                                  - message: cadence fields must match mode
+                                    rule: 'self.mode == ''Fixed'' ? (has(self.interval)
+                                      && !has(self.minimumInterval) && !has(self.maximumInterval))
+                                      : (!has(self.interval) && has(self.minimumInterval)
+                                      && has(self.maximumInterval))'
+                                fromHeight:
+                                  description: FromHeight is the lowest observed tip
+                                    height this cadence applies to.
+                                  format: int64
+                                  maximum: 4294967295
+                                  minimum: 0
+                                  type: integer
+                              required:
+                              - cadence
+                              - fromHeight
+                              type: object
+                            maxItems: 100
+                            minItems: 1
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - fromHeight
+                            x-kubernetes-list-type: map
+                            x-kubernetes-validations:
+                            - message: cadences must include fromHeight 0
+                              rule: self.exists(c, c.fromHeight == 0)
                         type: object
+                        x-kubernetes-validations:
+                        - message: select exactly one of cadence or cadences
+                          rule: has(self.cadence) != has(self.cadences)
                       scheduleRef:
                         description: ScheduleRef pins a selected immutable reusable
                           schedule.
@@ -5172,7 +5518,7 @@ spec:
                     type: string
                   progressWindowSeconds:
                     description: ProgressWindowSeconds bounds expected receipt progress
-                      using the effective cadence upper bound.
+                      using the selected cadence upper bound.
                     format: int64
                     maximum: 10810
                     minimum: 130
@@ -5186,7 +5532,8 @@ spec:
                     description: Schedule is the exact effective timing value.
                     properties:
                       cadence:
-                        description: Cadence controls block opportunities.
+                        description: Cadence controls block opportunities at every
+                          height.
                         properties:
                           interval:
                             description: Interval is the fixed duration.
@@ -5231,9 +5578,89 @@ spec:
                           rule: 'self.mode == ''Fixed'' ? (has(self.interval) && !has(self.minimumInterval)
                             && !has(self.maximumInterval)) : (!has(self.interval)
                             && has(self.minimumInterval) && has(self.maximumInterval))'
-                    required:
-                    - cadence
+                      cadences:
+                        description: |-
+                          Cadences selects timing by the freshly observed Bitcoin tip height: the entry with the
+                          greatest fromHeight not above the tip applies. Entry order is not significant. The bound
+                          keeps CEL cost estimates for schemas embedding a schedule per participant within budget
+                          (StacksNetwork exceeds it near 1000 entries) and matches other bounded lists.
+                        items:
+                          description: HeightCadence applies one cadence from a Bitcoin
+                            tip height.
+                          properties:
+                            cadence:
+                              description: Cadence controls opportunities from FromHeight
+                                until the next higher entry.
+                              properties:
+                                interval:
+                                  description: Interval is the fixed duration.
+                                  maxLength: 32
+                                  minLength: 2
+                                  type: string
+                                maximumInterval:
+                                  description: MaximumInterval bounds uniform timing.
+                                  maxLength: 32
+                                  minLength: 2
+                                  type: string
+                                minimumInterval:
+                                  description: MinimumInterval bounds uniform timing.
+                                  maxLength: 32
+                                  minLength: 2
+                                  type: string
+                                mode:
+                                  description: Mode selects fixed or uniform timing.
+                                  enum:
+                                  - Fixed
+                                  - Uniform
+                                  type: string
+                              required:
+                              - mode
+                              type: object
+                              x-kubernetes-validations:
+                              - message: interval must be between 1s and 1h
+                                rule: '!has(self.interval) || (duration(self.interval)
+                                  >= duration(''1s'') && duration(self.interval) <=
+                                  duration(''1h''))'
+                              - message: minimumInterval must be between 1s and 1h
+                                rule: '!has(self.minimumInterval) || (duration(self.minimumInterval)
+                                  >= duration(''1s'') && duration(self.minimumInterval)
+                                  <= duration(''1h''))'
+                              - message: maximumInterval must be between 1s and 1h
+                                rule: '!has(self.maximumInterval) || (duration(self.maximumInterval)
+                                  >= duration(''1s'') && duration(self.maximumInterval)
+                                  <= duration(''1h''))'
+                              - message: maximumInterval must not be below minimumInterval
+                                rule: '!has(self.minimumInterval) || !has(self.maximumInterval)
+                                  || duration(self.maximumInterval) >= duration(self.minimumInterval)'
+                              - message: cadence fields must match mode
+                                rule: 'self.mode == ''Fixed'' ? (has(self.interval)
+                                  && !has(self.minimumInterval) && !has(self.maximumInterval))
+                                  : (!has(self.interval) && has(self.minimumInterval)
+                                  && has(self.maximumInterval))'
+                            fromHeight:
+                              description: FromHeight is the lowest observed tip height
+                                this cadence applies to.
+                              format: int64
+                              maximum: 4294967295
+                              minimum: 0
+                              type: integer
+                          required:
+                          - cadence
+                          - fromHeight
+                          type: object
+                        maxItems: 100
+                        minItems: 1
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - fromHeight
+                        x-kubernetes-list-type: map
+                        x-kubernetes-validations:
+                        - message: cadences must include fromHeight 0
+                          rule: self.exists(c, c.fromHeight == 0)
                     type: object
+                    x-kubernetes-validations:
+                    - message: select exactly one of cadence or cadences
+                      rule: has(self.cadence) != has(self.cadences)
                   scheduleGeneration:
                     description: ScheduleGeneration records the observed immutable
                       schedule revision; zero means inline.

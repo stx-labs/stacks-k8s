@@ -890,9 +890,15 @@ metadata:
   name: steady-blocks
   namespace: lab-30
 spec:
-  cadence:
-    mode: Fixed
-    interval: 60s
+  cadences:
+  - fromHeight: 0
+    cadence:
+      mode: Fixed
+      interval: 5s
+  - fromHeight: 282
+    cadence:
+      mode: Fixed
+      interval: 60s
 ---
 apiVersion: bitcoin.stacks.org/v1alpha2
 kind: BitcoinBlockProduction
@@ -921,6 +927,7 @@ spec:
     - name: miner-wallet-03
     - name: miner-wallet-04
     matureOutputsPerMiner: 2
+    batchGeneration: true
 ---
 apiVersion: stacks.stacks.org/v1alpha2
 kind: StacksTransactionProduction

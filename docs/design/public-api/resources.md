@@ -827,9 +827,9 @@ metadata:
   name: steady-blocks
   namespace: lab-30
 spec:
-  cadence:
-    mode: Fixed
-    interval: 60s
+  cadences:                 # fast bootstrap until epoch 4.0 activates at 282
+    - {fromHeight: 0, cadence: {mode: Fixed, interval: 5s}}
+    - {fromHeight: 282, cadence: {mode: Fixed, interval: 60s}}
 ---
 apiVersion: bitcoin.stacks.org/v1alpha2
 kind: BitcoinBlockProduction
@@ -851,13 +851,19 @@ spec:
       - {name: miner-wallet-03}
       - {name: miner-wallet-04}
     matureOutputsPerMiner: 2
+    batchGeneration: true
 ```
 
 Schedule is a reusable immutable value, not a worker or network owner. Cadence is Fixed with
 positive interval or Uniform with positive `minimumInterval` and `maximumInterval >=
-minimumInterval`; bounds 1s–1h. Production accepts exactly one scheduleRef or inline
-`schedule` with the same shape; omitting both uses Fixed/60s. Changing a ref switches to
-another immutable schedule. The controller snapshots its value/generation into status;
+minimumInterval`; bounds 1s–1h. A schedule has exactly one of `cadence` (every height) or
+`cadences`: at most 100 entries with unique `fromHeight` values, including 0, in any order. The entry with the greatest `fromHeight` not above the freshly
+observed canonical tip times the next opportunity, so the example switches to 60s once tip
+282 is observed and back to 5s after a reorganization below it. Selection depends only on
+height, never on initialization progress; bootstrap ceilings and readiness still apply.
+Fingerprints and admitted snapshots order entries by height. Production accepts exactly one
+scheduleRef or inline `schedule` with the same shape; omitting both uses Fixed/60s. Changing
+a ref switches to another immutable schedule. The controller snapshots its value/generation into status;
 a rejected candidate retains the last complete admission while its exact captured schedule
 and payout identities remain available. Missing, replaced or deleting admitted inputs close
 new opportunities. Generation jitter is separate from weighted target selection.
@@ -931,7 +937,8 @@ spec:
 Immutable bounded override, created directly by user/agent. Required networkUID must match the
 current network before admission; production participant UID is pinned at activation; duration
 begins then (positive, maximum 1h). Pending admission also has a fixed 5m timeout from
-creation. Use exactly one inline schedule or scheduleRef. Override changes timing only, not
+creation. Use exactly one inline schedule or scheduleRef, with a single `cadence` that applies
+at every height. Override changes timing only, not
 targets, credentials or pause state. Only one can be Active: contention waits in deterministic
 creationTimestamp/UID order until pending expiry. A later pending override never preempts an
 active one. Deletion requests cancellation; expiry/cancellation ends future override

@@ -137,8 +137,8 @@ unavailable evidence makes it Unknown unless another known requirement is alread
 Optional faucets, extra actors and telemetry do not automatically gate global health.
 
 The release observation policy uses 2 s polls, a 10 s RPC bound, 5 s heartbeats and 16 s
-freshness. Progress windows are `max(120 s, 3 × cadence) + 10 s`, using the upper cadence
-bound when timing varies. Status heartbeats do not refresh the original receipt or
+freshness. Progress windows are `max(120 s, 3 × cadence) + 10 s`, using the upper bound of
+the selected cadence when timing varies. Status heartbeats do not refresh the original receipt or
 inclusion time. Readiness and fault cleanup remain separate from protocol recovery.
 
 Worker watches ignore execution heartbeats and native observation-only updates;

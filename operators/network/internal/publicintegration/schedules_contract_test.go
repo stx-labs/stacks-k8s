@@ -95,11 +95,11 @@ func TestScheduleQualificationMatchesResolvedBaselineAndTemporaryTiming(t *testi
 	baseline := &bitcoin.BitcoinBlockSchedule{
 		ObjectMeta: metav1.ObjectMeta{Name: "baseline", UID: "schedule"},
 		Spec: bitcoin.BitcoinBlockScheduleSpec{
-			Cadence: bitcoin.Cadence{Mode: "Fixed", Interval: ptr.To(common.Duration("7s"))},
+			Cadence: &bitcoin.Cadence{Mode: "Fixed", Interval: ptr.To(common.Duration("7s"))},
 		},
 	}
 	effective := bitcoin.BitcoinBlockScheduleSpec{
-		Cadence: bitcoin.Cadence{Mode: "Fixed", Interval: ptr.To(common.Duration("5s"))},
+		Cadence: &bitcoin.Cadence{Mode: "Fixed", Interval: ptr.To(common.Duration("5s"))},
 	}
 	targets := []bitcoin.ProductionTarget{{NodeRef: common.NameRef{Name: "node"}, Weight: 2}}
 	trial := scheduleTrial{

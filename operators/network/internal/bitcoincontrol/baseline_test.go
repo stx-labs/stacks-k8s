@@ -523,35 +523,31 @@ func TestBaselineAdmissionDependencyChangeReanchorsSamePolicy(t *testing.T) {
 func TestBaselineCadenceBoundsAndWeightedRanges(t *testing.T) {
 	for _, value := range []string{"999ms", "3601s", "24h", "bad"} {
 		if _, _, err := cadenceBounds(
-			&bitcoin.BitcoinBlockScheduleSpec{
-				Cadence: bitcoin.Cadence{Mode: "Fixed", Interval: ptr.To(common.Duration(value))},
-			},
+			&bitcoin.Cadence{Mode: "Fixed", Interval: ptr.To(common.Duration(value))},
 		); err == nil {
 			t.Fatalf("accepted invalid cadence %s", value)
 		}
 	}
 	for _, value := range []string{"1s", "1h"} {
 		if _, _, err := cadenceBounds(
-			&bitcoin.BitcoinBlockScheduleSpec{
-				Cadence: bitcoin.Cadence{Mode: "Fixed", Interval: ptr.To(common.Duration(value))},
-			},
+			&bitcoin.Cadence{Mode: "Fixed", Interval: ptr.To(common.Duration(value))},
 		); err != nil {
 			t.Fatal(err)
 		}
 	}
 	schedule := &bitcoin.BitcoinBlockScheduleSpec{
-		Cadence: bitcoin.Cadence{
+		Cadence: &bitcoin.Cadence{
 			Mode:            "Uniform",
 			MinimumInterval: ptr.To(common.Duration("1s")),
 			MaximumInterval: ptr.To(common.Duration("2s")),
 		},
 	}
 	s := &Scheduler{Draw: func(n int64) int64 { return n - 1 }}
-	if got, err := s.interval(schedule); err != nil || got != 2*time.Second {
+	if got, err := s.interval(schedule.Cadence); err != nil || got != 2*time.Second {
 		t.Fatalf("uniform upper bound omitted: %v %v", got, err)
 	}
 	schedule.Cadence.MinimumInterval = ptr.To(common.Duration("3s"))
-	if _, _, err := cadenceBounds(schedule); err == nil {
+	if _, _, err := cadenceBounds(schedule.Cadence); err == nil {
 		t.Fatal("reversed uniform bounds accepted")
 	}
 	targets := []bitcoin.BitcoinScheduledTarget{

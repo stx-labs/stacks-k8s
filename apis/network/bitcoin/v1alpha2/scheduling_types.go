@@ -15,6 +15,20 @@ type BitcoinScheduledTarget struct {
 	Weight int32 `json:"weight"`
 }
 
+// BitcoinCadenceSelection records which cadence set the current opportunity anchor.
+type BitcoinCadenceSelection struct {
+	// Cadence is the effective timing.
+	Cadence Cadence `json:"cadence"`
+	// Override identifies the active override that supplied Cadence.
+	Override *common.Binding `json:"override,omitempty"`
+	// FromHeight identifies the height-selected schedule entry; omitted for a single cadence or override.
+	// +kubebuilder:validation:Minimum=0
+	FromHeight *int64 `json:"fromHeight,omitempty"`
+	// Height is the observed Bitcoin tip height the selection was made at, when one was observed.
+	// +kubebuilder:validation:Minimum=0
+	Height *int64 `json:"height,omitempty"`
+}
+
 // BitcoinSchedulingStatus projects the effective network baseline onto the current producer.
 type BitcoinSchedulingStatus struct {
 	// Override identifies active temporary timing while admission retains the latest baseline.
@@ -29,6 +43,8 @@ type BitcoinSchedulingStatus struct {
 	PolicyDigest string `json:"policyDigest"`
 	// Schedule is the exact effective timing value.
 	Schedule *BitcoinBlockScheduleSpec `json:"schedule,omitempty"`
+	// Cadence is the cadence selected from Schedule for the current opportunity anchor.
+	Cadence *BitcoinCadenceSelection `json:"cadence,omitempty"`
 	// ScheduleRef pins an admitted reusable schedule when one was selected.
 	ScheduleRef *common.Binding `json:"scheduleRef,omitempty"`
 	// ScheduleGeneration records the observed immutable schedule revision; zero means inline.
@@ -57,7 +73,7 @@ type BitcoinSchedulingStatus struct {
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=100
 	EligibleTargets int32 `json:"eligibleTargets"`
-	// ProgressWindowSeconds bounds expected receipt progress using the effective cadence upper bound.
+	// ProgressWindowSeconds bounds expected receipt progress using the selected cadence upper bound.
 	// +kubebuilder:validation:Minimum=130
 	// +kubebuilder:validation:Maximum=10810
 	ProgressWindowSeconds int64 `json:"progressWindowSeconds,omitempty"`

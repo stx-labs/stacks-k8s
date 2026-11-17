@@ -191,6 +191,8 @@ func loadFixture(options fixtureOptions) (declarations, error) {
 	}
 	for _, o := range result.reusable {
 		if o.GetKind() == "BitcoinBlockSchedule" && o.GetName() == "steady-blocks" {
+			// The explicit qualification cadence replaces the example's height cadences.
+			unstructured.RemoveNestedField(o.Object, "spec", "cadences")
 			_ = unstructured.SetNestedField(o.Object, "Fixed", "spec", "cadence", "mode")
 			_ = unstructured.SetNestedField(o.Object, options.cadence.String(), "spec", "cadence", "interval")
 		}

@@ -125,16 +125,24 @@ func bitcoinTiming(s *vocabulary.BitcoinSchedulingStatus) (time.Duration, time.D
 	if s == nil || s.Schedule == nil {
 		return 0, 0, false
 	}
+	// The selected cadence governs height schedules and overrides; a single cadence is its own selection.
+	cadence := s.Schedule.Cadence
+	if s.Cadence != nil {
+		cadence = &s.Cadence.Cadence
+	}
+	if cadence == nil {
+		return 0, 0, false
+	}
 	var bound time.Duration
 	var err error
-	switch s.Schedule.Cadence.Mode {
+	switch cadence.Mode {
 	case vocabulary.CadenceFixed:
-		if s.Schedule.Cadence.Interval != nil {
-			bound, err = time.ParseDuration(string(*s.Schedule.Cadence.Interval))
+		if cadence.Interval != nil {
+			bound, err = time.ParseDuration(string(*cadence.Interval))
 		}
 	case vocabulary.CadenceUniform:
-		if s.Schedule.Cadence.MaximumInterval != nil {
-			bound, err = time.ParseDuration(string(*s.Schedule.Cadence.MaximumInterval))
+		if cadence.MaximumInterval != nil {
+			bound, err = time.ParseDuration(string(*cadence.MaximumInterval))
 		}
 	}
 	window := foundation.ProgressWindow(bound)

@@ -31,6 +31,7 @@ type BitcoinBlockScheduleOverrideList struct {
 
 // BitcoinBlockScheduleOverrideSpec changes timing without changing targets or pause.
 // +kubebuilder:validation:XValidation:rule="has(self.schedule) != has(self.scheduleRef)",message="select exactly one schedule source"
+// +kubebuilder:validation:XValidation:rule="!has(self.schedule) || !has(self.schedule.cadences)",message="overrides supply a single cadence"
 type BitcoinBlockScheduleOverrideSpec struct {
 	// NetworkUID pins the canonical network incarnation.
 	// +kubebuilder:validation:Type=string
@@ -41,7 +42,7 @@ type BitcoinBlockScheduleOverrideSpec struct {
 	ProductionRef common.NameRef `json:"productionRef"`
 	// Schedule contains immutable inline timing.
 	Schedule *BitcoinBlockScheduleSpec `json:"schedule,omitempty"`
-	// ScheduleRef selects one immutable same-namespace schedule.
+	// ScheduleRef selects one immutable same-namespace schedule with a single cadence.
 	ScheduleRef *common.NameRef `json:"scheduleRef,omitempty"`
 	// Duration starts at activation, including time spent paused.
 	// +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s') && duration(self) <= duration('1h')",message="duration must be positive and at most 1h"

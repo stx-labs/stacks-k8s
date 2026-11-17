@@ -72,10 +72,31 @@ type Cadence struct {
 	MaximumInterval *common.Duration `json:"maximumInterval,omitempty"`
 }
 
-// BitcoinBlockScheduleSpec defines immutable reusable timing.
-type BitcoinBlockScheduleSpec struct {
-	// Cadence controls block opportunities.
+// HeightCadence applies one cadence from a Bitcoin tip height.
+type HeightCadence struct {
+	// FromHeight is the lowest observed tip height this cadence applies to.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=4294967295
+	FromHeight int64 `json:"fromHeight"`
+	// Cadence controls opportunities from FromHeight until the next higher entry.
 	Cadence Cadence `json:"cadence"`
+}
+
+// BitcoinBlockScheduleSpec defines immutable reusable timing.
+// +kubebuilder:validation:XValidation:rule="has(self.cadence) != has(self.cadences)",message="select exactly one of cadence or cadences"
+type BitcoinBlockScheduleSpec struct {
+	// Cadence controls block opportunities at every height.
+	Cadence *Cadence `json:"cadence,omitempty"`
+	// Cadences selects timing by the freshly observed Bitcoin tip height: the entry with the
+	// greatest fromHeight not above the tip applies. Entry order is not significant. The bound
+	// keeps CEL cost estimates for schemas embedding a schedule per participant within budget
+	// (StacksNetwork exceeds it near 1000 entries) and matches other bounded lists.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=100
+	// +listType=map
+	// +listMapKey=fromHeight
+	// +kubebuilder:validation:XValidation:rule="self.exists(c, c.fromHeight == 0)",message="cadences must include fromHeight 0"
+	Cadences []HeightCadence `json:"cadences,omitempty"`
 }
 
 // ProductionTarget gives one participant a positive selection weight.

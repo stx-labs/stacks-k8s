@@ -149,7 +149,10 @@ func (s *Scheduler) overrideSchedule(
 		value.Fingerprint = foundation.Digest(object.Spec)
 		pin = &value
 	}
-	if _, _, err := cadenceBounds(schedule); err != nil {
+	if len(schedule.Cadences) > 0 {
+		return nil, nil, fmt.Errorf("overrides supply a single cadence")
+	}
+	if _, _, err := cadenceBounds(schedule.Cadence); err != nil {
 		return nil, nil, err
 	}
 	return schedule, pin, nil

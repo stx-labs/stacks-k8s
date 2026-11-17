@@ -70,7 +70,7 @@ func newOverride(f *testFixture, name, interval, duration string) *bitcoin.Bitco
 			NetworkUID:    f.root.UID,
 			ProductionRef: common.NameRef{Name: "production"},
 			Schedule: &bitcoin.BitcoinBlockScheduleSpec{
-				Cadence: bitcoin.Cadence{Mode: "Fixed", Interval: ptr.To(common.Duration(interval))},
+				Cadence: &bitcoin.Cadence{Mode: "Fixed", Interval: ptr.To(common.Duration(interval))},
 			},
 			Duration: common.Duration(duration),
 		},

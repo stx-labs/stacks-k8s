@@ -291,6 +291,8 @@ type BitcoinInitializationStatus struct {
 	Production *common.Binding `json:"production,omitempty"`
 	// NextOpportunityAt is the durable cadence anchor; pauses do not create catch-up bursts.
 	NextOpportunityAt *metav1.Time `json:"nextOpportunityAt,omitempty"`
+	// Cadence records the selection that set NextOpportunityAt; a different selection re-anchors it.
+	Cadence *BitcoinCadenceSelection `json:"cadence,omitempty"`
 	// Offer is the sole selected, durable generation opportunity.
 	Offer *BitcoinBlockOffer `json:"offer,omitempty"`
 	// LastAccountedOffer prevents duplicate funding accounting after retries.

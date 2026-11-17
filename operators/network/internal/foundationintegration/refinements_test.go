@@ -241,7 +241,8 @@ func verifyFrozenPolicyUpdates(
 			case "initialization":
 				production.Spec.Initialization.MatureOutputsPerMiner++
 			default:
-				production.Spec.Initialization.BatchGeneration = ptr.To(true)
+				batch := !ptr.Deref(originalProduction.Initialization.BatchGeneration, false)
+				production.Spec.Initialization.BatchGeneration = &batch
 			}
 			updateObject(t, ctx, c, &production)
 			for i := range root.Spec.Participants {

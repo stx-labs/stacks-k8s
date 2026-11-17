@@ -284,8 +284,8 @@ immutable configuration. Optional telemetry has its own collection configuration
 Freshness expires at `observationTime + 3 * pollInterval + rpcAllowance` (16s for
 this profile). Bitcoin and traffic progress each use a window of
 `max(progressGrace, 3 * effectiveCadenceUpperBound) + rpcAllowance`. For Bitcoin,
-use the current admitted Fixed interval or Uniform maximum, including an active
-schedule override; for traffic, use its admitted transfer interval. Pauses do not
+use the Fixed interval or Uniform maximum of the cadence that set the current opportunity
+anchor: an active schedule override, the height-selected entry, or the single cadence; for traffic, use its admitted transfer interval. Pauses do not
 refresh progress. Both progress windows must have evidence before Operational=True;
 slower cadences increase the window, not the age of the underlying read observation.
 After a timing update, re-evaluate the window using the applied policy. Publish the

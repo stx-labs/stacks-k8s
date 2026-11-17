@@ -15,7 +15,7 @@ import (
 func TestBitcoinProductionScheduleDefaultAndExplicitSources(t *testing.T) {
 	fixed := func(interval common.Duration) *bitcoin.BitcoinBlockScheduleSpec {
 		return &bitcoin.BitcoinBlockScheduleSpec{
-			Cadence: bitcoin.Cadence{Mode: bitcoin.CadenceFixed, Interval: &interval},
+			Cadence: &bitcoin.Cadence{Mode: bitcoin.CadenceFixed, Interval: &interval},
 		}
 	}
 	for _, tc := range []struct {

@@ -283,7 +283,32 @@ func duration(value common.Duration) (time.Duration, error) {
 }
 
 func validateSchedule(s bitcoin.BitcoinBlockScheduleSpec) error {
-	c := s.Cadence
+	if (s.Cadence == nil) == (len(s.Cadences) == 0) {
+		return fmt.Errorf("select exactly one of cadence or cadences")
+	}
+	if s.Cadence != nil {
+		return validateCadence(*s.Cadence)
+	}
+	if len(s.Cadences) > maxHeightCadences {
+		return fmt.Errorf("at most %d cadences", maxHeightCadences)
+	}
+	seen := map[int64]bool{}
+	for _, entry := range s.Cadences {
+		if entry.FromHeight < 0 || seen[entry.FromHeight] {
+			return fmt.Errorf("cadence heights must be unique and non-negative")
+		}
+		seen[entry.FromHeight] = true
+		if err := validateCadence(entry.Cadence); err != nil {
+			return err
+		}
+	}
+	if !seen[0] {
+		return fmt.Errorf("cadences must include fromHeight 0")
+	}
+	return nil
+}
+
+func validateCadence(c bitcoin.Cadence) error {
 	switch c.Mode {
 	case bitcoin.CadenceFixed:
 		if c.Interval == nil || c.MinimumInterval != nil || c.MaximumInterval != nil {

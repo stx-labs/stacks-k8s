@@ -322,7 +322,7 @@ func newFixture(t *testing.T) *testFixture {
 				Configuration: api.Configuration{
 					BitcoinBlockProduction: &bitcoin.BitcoinBlockProductionSpec{
 						Schedule: &bitcoin.BitcoinBlockScheduleSpec{
-							Cadence: bitcoin.Cadence{Mode: "Fixed", Interval: &duration},
+							Cadence: &bitcoin.Cadence{Mode: "Fixed", Interval: &duration},
 						},
 					},
 				},

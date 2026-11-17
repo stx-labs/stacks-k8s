@@ -49,6 +49,13 @@ func (s *Scheduler) reconcileBaseline(
 		record.Status.Phase, record.Status.Reason = phase, reason
 		baseline.Scheduling.NextOpportunityAt = record.Status.NextOpportunityAt.DeepCopy()
 		baseline.Scheduling.Reason = reason
+		// Liveness follows the cadence that set the current anchor, not the whole declared schedule.
+		if anchor := record.Status.Cadence; anchor != nil {
+			if window, err := progressWindowSeconds(&anchor.Cadence); err == nil {
+				baseline.Scheduling.Cadence = anchor.DeepCopy()
+				baseline.Scheduling.ProgressWindowSeconds = window
+			}
+		}
 		if !equality.Semantic.DeepEqual(before.Status, record.Status) {
 			if err := s.Client.Status().Update(ctx, record); err != nil {
 				return ctrl.Result{}, err
@@ -99,9 +106,9 @@ func (s *Scheduler) reconcileBaseline(
 		return report(bitcoin.InitializationBlocked, reasonBaselineInputsUnavailable)
 	}
 	inputs.Override = record.Status.Override.DeepCopy()
-	inputs.Schedule = effectiveSchedule(record, inputs.Schedule)
-	_, upper, _ := cadenceBounds(inputs.Schedule)
-	inputs.ProgressWindowSeconds = int64((foundation.ProgressWindow(upper) + time.Second - 1) / time.Second)
+	admitted := inputs.Schedule
+	inputs.Schedule = effectiveSchedule(record, admitted)
+	inputs.ProgressWindowSeconds = scheduleWindowSeconds(inputs.Schedule)
 	if baseline.Scheduling.AdmissionDigest != inputs.AdmissionDigest ||
 		!equality.Semantic.DeepEqual(baseline.Scheduling.Override, inputs.Override) {
 		s.withdrawBaseline(record)
@@ -123,8 +130,9 @@ func (s *Scheduler) reconcileBaseline(
 		return report(bitcoin.InitializationPreparing, reasonBaselinePolicyAdopted)
 	}
 	baseline.Scheduling.EligibleTargets = 0
+	var tip *int64 // highest current-process observation, independent of target availability
 	for i := range inputs.Targets {
-		if _, reason := s.observeBaselineTarget(
+		_, observation, reason := s.inspectBaselineTarget(
 			ctx,
 			s.Client,
 			true,
@@ -132,8 +140,12 @@ func (s *Scheduler) reconcileBaseline(
 			record,
 			&inputs.Targets[i].Participant,
 			executions,
-		); reason == "" {
+		)
+		if reason == "" {
 			baseline.Scheduling.EligibleTargets++
+		}
+		if observation != nil && (tip == nil || observation.Height > *tip) {
+			tip = ptr.To(observation.Height)
 		}
 	}
 	baseline.Scheduling.ObservedAt = ptr.To(metav1.NewTime(s.Now().UTC().Truncate(time.Second)))
@@ -143,13 +155,23 @@ func (s *Scheduler) reconcileBaseline(
 		return report(bitcoin.InitializationPaused, api.ReasonDesiredPause)
 	}
 	now := s.Now()
+	selection, selectionErr := selectCadence(record, admitted, tip)
+	// A different height entry or override re-anchors timing once no opportunity is being committed.
+	if selectionErr == nil && record.Status.NextOpportunityAt != nil &&
+		baseline.Stage != bitcoin.BaselineSelected && baseline.Stage != bitcoin.BaselineOffered &&
+		!sameCadence(record.Status.Cadence, selection) {
+		record.Status.NextOpportunityAt = nil
+	}
 	if record.Status.NextOpportunityAt == nil {
-		interval, err := s.interval(inputs.Schedule)
+		if selectionErr != nil {
+			return report(cadenceFailure(selectionErr))
+		}
+		interval, err := s.interval(&selection.Cadence)
 		if err != nil {
 			return report(bitcoin.InitializationBlocked, reasonCadenceUnavailable)
 		}
 		next := metav1.NewTime(now.Add(interval).UTC())
-		record.Status.NextOpportunityAt = &next
+		record.Status.NextOpportunityAt, record.Status.Cadence = &next, selection
 		return report(bitcoin.InitializationPreparing, reasonBaselineCadenceArmed)
 	}
 	if baseline.Stage == bitcoin.BaselineSelected || baseline.Stage == bitcoin.BaselineOffered {
@@ -208,7 +230,10 @@ func (s *Scheduler) reconcileBaseline(
 	if baseline.Sequence == math.MaxInt64 || baseline.Scheduling.Opportunities == math.MaxInt64 {
 		return report(bitcoin.InitializationBlocked, reasonOpportunityCounterExhausted)
 	}
-	interval, err := s.interval(inputs.Schedule)
+	if selectionErr != nil {
+		return report(cadenceFailure(selectionErr))
+	}
+	interval, err := s.interval(&selection.Cadence)
 	if err != nil {
 		return report(bitcoin.InitializationBlocked, reasonCadenceUnavailable)
 	}
@@ -221,7 +246,7 @@ func (s *Scheduler) reconcileBaseline(
 	baseline.SelectedTarget = &target
 	baseline.Stage = bitcoin.BaselineSelected
 	next := metav1.NewTime(now.Add(interval).UTC())
-	record.Status.NextOpportunityAt = &next
+	record.Status.NextOpportunityAt, record.Status.Cadence = &next, selection
 	record.Status.Offer = nil
 	result, err := report(bitcoin.InitializationPreparing, reasonBaselineTargetSelected)
 	result.RequeueAfter = time.Millisecond
@@ -281,27 +306,50 @@ func (s *Scheduler) observeBaselineTarget(
 	pin *common.Binding,
 	executions map[types.UID]*bitcoin.BitcoinExecution,
 ) (*bitcoin.BitcoinExecution, string) {
+	execution, _, reason := s.inspectBaselineTarget(ctx, reader, publicOnly, root, initial, pin, executions)
+	return execution, reason
+}
+
+// inspectBaselineTarget also returns the target's current-process observation, which remains
+// valid timing evidence while the target is busy or otherwise unable to take a new offer.
+func (s *Scheduler) inspectBaselineTarget(
+	ctx context.Context,
+	reader client.Reader,
+	publicOnly bool,
+	root *api.StacksNetwork,
+	initial *bitcoin.BitcoinInitialization,
+	pin *common.Binding,
+	executions map[types.UID]*bitcoin.BitcoinExecution,
+) (*bitcoin.BitcoinExecution, *bitcoin.BitcoinObservation, string) {
+	var current *bitcoin.BitcoinObservation
+	fail := func(reason string) (*bitcoin.BitcoinExecution, *bitcoin.BitcoinObservation, string) {
+		return nil, current, reason
+	}
 	if pin == nil {
-		return nil, reasonSelectedTargetUnavailable
+		return fail(reasonSelectedTargetUnavailable)
 	}
 	var p api.StacksNetworkParticipant
 	if err := reader.Get(
 		ctx,
 		client.ObjectKey{Namespace: root.Namespace, Name: pin.Name},
 		&p,
-	); err != nil || p.UID != pin.UID || p.Spec.Kind != api.ParticipantBitcoinNode || !participantCurrent(root, &p) ||
-		p.Spec.Control != nil && ptr.Deref(p.Spec.Control.Suspended, false) {
-		return nil, reasonSelectedTargetUnavailable
+	); err != nil || p.UID != pin.UID || p.Spec.Kind != api.ParticipantBitcoinNode || !participantCurrent(root, &p) {
+		return fail(reasonSelectedTargetUnavailable)
+	}
+	execution := executions[pin.UID]
+	current = s.currentObservation(execution, &p)
+	if p.Spec.Control != nil && ptr.Deref(p.Spec.Control.Suspended, false) {
+		return fail(reasonSelectedTargetUnavailable)
 	}
 	if err := foundation.ValidateAdmissionEligibility(ctx, reader, &p); err != nil {
-		return nil, reasonSelectedAdmissionUnavailable
+		return fail(reasonSelectedAdmissionUnavailable)
 	}
 	validate := foundation.ValidateParticipantAdmission
 	if publicOnly {
 		validate = foundation.ValidatePublicParticipantAdmission
 	}
 	if err := validate(ctx, reader, root, &p); err != nil {
-		return nil, reasonSelectedDependencyUnavailable
+		return fail(reasonSelectedDependencyUnavailable)
 	}
 	rt := p.Status.Runtime
 	ready := meta.FindStatusCondition(p.Status.Conditions, api.ConditionWorkloadReady)
@@ -313,40 +361,31 @@ func (s *Scheduler) observeBaselineTarget(
 		rt.RPCSecretRef == nil ||
 		rt.ContainerID == "" ||
 		rt.Terminated {
-		return nil, reasonSelectedTargetNotReady
+		return fail(reasonSelectedTargetNotReady)
 	}
 	if config := p.Status.Admission.Configuration.BitcoinNode; config == nil ||
 		config.Config != nil &&
 			ptr.Deref(config.Config.Compatibility, common.CompatibilityManaged) == common.CompatibilityUnverified {
-		return nil, reasonSelectedTargetUnverified
+		return fail(reasonSelectedTargetUnverified)
 	}
-	execution := executions[pin.UID]
 	if execution == nil {
-		return nil, reasonSelectedExecutionUnavailable
+		return fail(reasonSelectedExecutionUnavailable)
 	}
 	if execution.DeletionTimestamp != nil || execution.Spec.Participant.Name != pin.Name {
-		return nil, reasonSelectedExecutionUnavailable
+		return fail(reasonSelectedExecutionUnavailable)
 	}
 	if execution.Status.Armed != nil || execution.Status.PendingWalletRemoval != nil ||
 		execution.Status.Reservation != nil &&
 			*execution.Status.Reservation != objectref.BitcoinInitialization(initial) ||
 		!generationAccounted(initial, execution) {
-		return nil, reasonSelectedTargetBusy
+		return fail(reasonSelectedTargetBusy)
 	}
-	observation := execution.Status.Observation
-	if observation == nil || s.Now().Sub(observation.ObservedAt.Time) > s.Freshness ||
-		observation.ObservedAt.After(s.Now()) ||
-		observation.Target.Participant.UID != p.UID ||
-		observation.Target.Pod.UID != rt.PodRef.UID ||
-		observation.Target.ContainerID != rt.ContainerID ||
-		observation.Target.PolicyDigest != rt.PolicyDigest ||
-		observation.Target.Configuration != *rt.ConfigRef ||
-		observation.Target.Credentials != *rt.RPCSecretRef ||
-		observation.Height == math.MaxInt64 {
-		return nil, reasonSelectedObservationUnavailable
+	observation := current
+	if observation == nil {
+		return fail(reasonSelectedObservationUnavailable)
 	}
 	if len(observation.Wallets) != len(ptr.Deref(p.Status.Admission.Configuration.BitcoinNode.WalletRefs, nil)) {
-		return nil, reasonSelectedWalletsPreparing
+		return fail(reasonSelectedWalletsPreparing)
 	}
 	for _, wallet := range observation.Wallets {
 		pinned := false
@@ -354,10 +393,35 @@ func (s *Scheduler) observeBaselineTarget(
 			pinned = pinned || dependency == wallet.Wallet
 		}
 		if !wallet.Ready || !pinned {
-			return nil, reasonSelectedWalletsPreparing
+			return fail(reasonSelectedWalletsPreparing)
 		}
 	}
-	return execution, ""
+	return execution, current, ""
+}
+
+// currentObservation returns execution's fresh observation only when it came from p's current
+// process, policy, configuration and credentials.
+func (s *Scheduler) currentObservation(
+	execution *bitcoin.BitcoinExecution,
+	p *api.StacksNetworkParticipant,
+) *bitcoin.BitcoinObservation {
+	if execution == nil || execution.DeletionTimestamp != nil || execution.Spec.Participant.Name != p.Name {
+		return nil
+	}
+	rt, observation, now := p.Status.Runtime, execution.Status.Observation, s.Now()
+	if rt == nil || rt.PodRef == nil || rt.ConfigRef == nil || rt.RPCSecretRef == nil || observation == nil ||
+		now.Sub(observation.ObservedAt.Time) > s.Freshness ||
+		observation.ObservedAt.After(now) ||
+		observation.Target.Participant.UID != p.UID ||
+		observation.Target.Pod.UID != rt.PodRef.UID ||
+		observation.Target.ContainerID != rt.ContainerID ||
+		observation.Target.PolicyDigest != rt.PolicyDigest ||
+		observation.Target.Configuration != *rt.ConfigRef ||
+		observation.Target.Credentials != *rt.RPCSecretRef ||
+		observation.Height == math.MaxInt64 {
+		return nil
+	}
+	return observation
 }
 
 // accountBaselineReceipts counts each exact per-node baseline receipt once, including retired producers.

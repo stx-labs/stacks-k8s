@@ -337,18 +337,28 @@ func (s *Scheduler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.R
 		}
 		return report(bitcoin.InitializationPreparing, reasonOpportunityOutstanding)
 	}
+	selection, e := selectCadence(
+		record,
+		production.Status.Admission.Configuration.BitcoinBlockProduction.Schedule,
+		&height,
+	)
+	if e != nil {
+		return report(cadenceFailure(e))
+	}
+	// A different height entry or override re-anchors timing; offers and armed RPCs are unaffected.
+	if record.Status.NextOpportunityAt != nil && !sameCadence(record.Status.Cadence, selection) {
+		record.Status.NextOpportunityAt = nil
+	}
 	if record.Status.NextOpportunityAt != nil && s.Now().Before(record.Status.NextOpportunityAt.Time) {
 		return report(bitcoin.InitializationPreparing, reasonCadenceWaiting)
 	}
-	interval, e := s.interval(
-		effectiveSchedule(record, production.Status.Admission.Configuration.BitcoinBlockProduction.Schedule),
-	)
+	interval, e := s.interval(&selection.Cadence)
 	if e != nil {
 		return report(bitcoin.InitializationBlocked, reasonCadenceUnavailable)
 	}
 	if record.Status.NextOpportunityAt == nil {
 		next := metav1.NewTime(s.Now().Add(interval).UTC())
-		record.Status.NextOpportunityAt = &next
+		record.Status.NextOpportunityAt, record.Status.Cadence = &next, selection
 		return report(bitcoin.InitializationPreparing, reasonCadenceArmed)
 	}
 	if s.Now().Before(record.Status.NextOpportunityAt.Time) {
@@ -388,7 +398,7 @@ func (s *Scheduler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.R
 	}
 	number++
 	next := metav1.NewTime(s.Now().Add(interval).UTC())
-	record.Status.NextOpportunityAt = &next
+	record.Status.NextOpportunityAt, record.Status.Cadence = &next, selection
 	record.Status.Offer = &bitcoin.BitcoinBlockOffer{
 		Count:          blocks,
 		Override:       overrideBinding(record),
@@ -409,8 +419,8 @@ func (s *Scheduler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.R
 }
 
 // interval validates the compiled cadence and samples only within its declared bounds.
-func (s *Scheduler) interval(schedule *bitcoin.BitcoinBlockScheduleSpec) (time.Duration, error) {
-	low, high, err := cadenceBounds(schedule)
+func (s *Scheduler) interval(cadence *bitcoin.Cadence) (time.Duration, error) {
+	low, high, err := cadenceBounds(cadence)
 	if err != nil {
 		return 0, err
 	}
@@ -425,9 +435,9 @@ func (s *Scheduler) interval(schedule *bitcoin.BitcoinBlockScheduleSpec) (time.D
 }
 
 // cadenceBounds validates complete timing independently of random selection.
-func cadenceBounds(schedule *bitcoin.BitcoinBlockScheduleSpec) (time.Duration, time.Duration, error) {
-	if schedule == nil {
-		return 0, 0, fmt.Errorf("compiled schedule unavailable")
+func cadenceBounds(cadence *bitcoin.Cadence) (time.Duration, time.Duration, error) {
+	if cadence == nil {
+		return 0, 0, fmt.Errorf("compiled cadence unavailable")
 	}
 	parse := func(value *common.Duration) (time.Duration, error) {
 		if value == nil {
@@ -439,7 +449,6 @@ func cadenceBounds(schedule *bitcoin.BitcoinBlockScheduleSpec) (time.Duration, t
 		}
 		return d, nil
 	}
-	cadence := schedule.Cadence
 	if cadence.Mode == bitcoin.CadenceFixed {
 		if cadence.MinimumInterval != nil || cadence.MaximumInterval != nil {
 			return 0, 0, fmt.Errorf("fixed cadence fields conflict")

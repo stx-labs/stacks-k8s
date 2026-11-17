@@ -47,11 +47,53 @@ func TestBaselineAPIAllocationCASAndStatusOwnership(t *testing.T) {
 	} {
 		schedule := &bitcoin.BitcoinBlockSchedule{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: fmt.Sprintf("invalid-%d", i)},
-			Spec:       bitcoin.BitcoinBlockScheduleSpec{Cadence: cadence},
+			Spec:       bitcoin.BitcoinBlockScheduleSpec{Cadence: &cadence},
 		}
 		if err := c.Create(ctx, schedule); !apierrors.IsInvalid(err) {
 			t.Fatalf("invalid cadence admitted: %+v: %v", cadence, err)
 		}
+	}
+	fast := bitcoin.Cadence{Mode: "Fixed", Interval: ptr.To(common.Duration("5s"))}
+	entries := func(heights ...int64) []bitcoin.HeightCadence {
+		out := make([]bitcoin.HeightCadence, 0, len(heights))
+		for _, height := range heights {
+			out = append(out, bitcoin.HeightCadence{FromHeight: height, Cadence: fast})
+		}
+		return out
+	}
+	tooMany := make([]int64, 101)
+	for i := range tooMany {
+		tooMany[i] = int64(i)
+	}
+	for name, spec := range map[string]bitcoin.BitcoinBlockScheduleSpec{
+		"neither":   {},
+		"both":      {Cadence: &fast, Cadences: entries(0)},
+		"no-zero":   {Cadences: entries(1, 282)},
+		"duplicate": {Cadences: entries(0, 282, 282)},
+		"too-many":  {Cadences: entries(tooMany...)},
+	} {
+		schedule := &bitcoin.BitcoinBlockSchedule{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: "invalid-" + name},
+			Spec:       spec,
+		}
+		if err := c.Create(ctx, schedule); !apierrors.IsInvalid(err) {
+			t.Fatalf("invalid %s height cadences admitted: %v", name, err)
+		}
+	}
+	must(c.Create(ctx, &bitcoin.BitcoinBlockSchedule{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: "unordered-heights"},
+		Spec:       bitcoin.BitcoinBlockScheduleSpec{Cadences: entries(282, 0)},
+	}))
+	if err := c.Create(ctx, &bitcoin.BitcoinBlockScheduleOverride{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: "height-override"},
+		Spec: bitcoin.BitcoinBlockScheduleOverrideSpec{
+			NetworkUID:    "network-uid",
+			ProductionRef: common.NameRef{Name: "production"},
+			Schedule:      &bitcoin.BitcoinBlockScheduleSpec{Cadences: entries(0)},
+			Duration:      "1m",
+		},
+	}); !apierrors.IsInvalid(err) {
+		t.Fatalf("override with height cadences admitted: %v", err)
 	}
 	root := f.root.DeepCopy()
 	root.UID = ""
@@ -271,7 +313,7 @@ func TestBaselineAPIAllocationCASAndStatusOwnership(t *testing.T) {
 			NetworkUID:    root.UID,
 			ProductionRef: common.NameRef{Name: production.Spec.ParticipantName},
 			Schedule: &bitcoin.BitcoinBlockScheduleSpec{
-				Cadence: bitcoin.Cadence{Mode: "Fixed", Interval: ptr.To(common.Duration("2s"))},
+				Cadence: &bitcoin.Cadence{Mode: "Fixed", Interval: ptr.To(common.Duration("2s"))},
 			},
 			Duration: common.Duration("5s"),
 		},

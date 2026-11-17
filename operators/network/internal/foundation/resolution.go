@@ -201,18 +201,21 @@ func (c *candidate) validate(ctx context.Context, r client.Reader, all map[strin
 				schedule.DeletionTimestamp != nil {
 				errs = append(errs, fmt.Errorf("schedule unavailable"))
 			} else {
-				v.Schedule = &schedule.Spec
+				spec := CanonicalSchedule(schedule.Spec)
+				v.Schedule = &spec
 				v.ScheduleRef = nil
 				c.dependencies = append(
 					c.dependencies,
-					objectref.WithFingerprint(objectref.BitcoinBlockSchedule(&schedule), Digest(schedule.Spec)),
+					objectref.WithFingerprint(objectref.BitcoinBlockSchedule(&schedule), Digest(spec)),
 				)
 			}
 		}
 		if v.Schedule == nil {
 			errs = append(errs, fmt.Errorf("schedule missing"))
 		} else {
-			errs = append(errs, validateSchedule(*v.Schedule))
+			spec := CanonicalSchedule(*v.Schedule)
+			v.Schedule = &spec
+			errs = append(errs, validateSchedule(spec))
 		}
 		if v.Initialization == nil {
 			errs = append(errs, fmt.Errorf("missing Bitcoin initialization"))

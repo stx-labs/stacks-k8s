@@ -27,6 +27,8 @@ const (
 	reasonBootstrapGateAuthorityUnavailable = "BootstrapGateAuthorityUnavailable"
 	// reasonCadenceArmed reports CadenceArmed.
 	reasonCadenceArmed = "CadenceArmed"
+	// reasonCadenceHeightUnavailable reports CadenceHeightUnavailable.
+	reasonCadenceHeightUnavailable = "CadenceHeightUnavailable"
 	// reasonCadenceUnavailable reports CadenceUnavailable.
 	reasonCadenceUnavailable = "CadenceUnavailable"
 	// reasonCadenceWaiting reports CadenceWaiting.

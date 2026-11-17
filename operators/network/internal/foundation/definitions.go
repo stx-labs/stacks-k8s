@@ -72,6 +72,11 @@ func (r *DefinitionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 	case *bitcoin.BitcoinBlockSchedule:
 		validation = validateSchedule(v.Spec)
+		canonical := v.DeepCopy()
+		canonical.Spec = CanonicalSchedule(v.Spec)
+		if input, err = sourceSpec(canonical); err != nil {
+			return ctrl.Result{}, err
+		}
 	case *api.StacksEpochSchedule:
 		validation = validateEpochs(v.Spec.Epochs)
 	}

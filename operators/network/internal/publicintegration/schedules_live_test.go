@@ -161,7 +161,7 @@ func (h *harness) scheduleDefinition(
 	object := &bitcoin.BitcoinBlockSchedule{
 		TypeMeta:   metav1.TypeMeta{APIVersion: bitcoin.GroupVersion.String(), Kind: "BitcoinBlockSchedule"},
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: h.config.namespace},
-		Spec:       bitcoin.BitcoinBlockScheduleSpec{Cadence: cadence},
+		Spec:       bitcoin.BitcoinBlockScheduleSpec{Cadence: &cadence},
 	}
 	if err := h.c.Create(ctx, object); err != nil {
 		return nil, err

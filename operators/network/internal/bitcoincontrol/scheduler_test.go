@@ -154,7 +154,7 @@ func TestUniformCadenceDrawOnlyWhenChoosingNewAnchor(t *testing.T) {
 	production := &api.StacksNetworkParticipant{}
 	_ = f.c.Get(context.Background(), client.ObjectKeyFromObject(f.production), production)
 	production.Status.Admission.Configuration.BitcoinBlockProduction.Schedule = &bitcoin.BitcoinBlockScheduleSpec{
-		Cadence: bitcoin.Cadence{
+		Cadence: &bitcoin.Cadence{
 			Mode:            "Uniform",
 			MinimumInterval: ptr.To(common.Duration("1s")),
 			MaximumInterval: ptr.To(common.Duration("3s")),
@@ -254,16 +254,16 @@ func TestTerminalDrainRetainsUnknownOutcome(t *testing.T) {
 
 func TestCadenceRejectsInvalidBounds(t *testing.T) {
 	s := &Scheduler{Draw: func(int64) int64 { return 0 }}
-	for _, schedule := range []*bitcoin.BitcoinBlockScheduleSpec{
+	for _, cadence := range []*bitcoin.Cadence{
 		nil,
-		{Cadence: bitcoin.Cadence{Mode: "Fixed", Interval: ptr.To(common.Duration("0s"))}},
-		{Cadence: bitcoin.Cadence{
+		{Mode: "Fixed", Interval: ptr.To(common.Duration("0s"))},
+		{
 			Mode:            "Uniform",
 			MinimumInterval: ptr.To(common.Duration("2s")),
 			MaximumInterval: ptr.To(common.Duration("1s")),
-		}},
+		},
 	} {
-		if _, e := s.interval(schedule); e == nil {
+		if _, e := s.interval(cadence); e == nil {
 			t.Fatal("invalid cadence accepted")
 		}
 	}
