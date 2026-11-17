@@ -33,7 +33,9 @@ collect() {
   mkdir -p "$OUT/logs"
   kn get pods -o wide > "$OUT/pods.txt" 2>&1 || true
   kn get stacksnetwork network -o yaml > "$OUT/network.yaml" 2>&1 || true
-  kn get stacksnetworkparticipants -o yaml > "$OUT/participants.yaml" 2>&1 || true
+  # Every namespaced *.stacks.org resource: participants, Bitcoin executions, production, ...
+  kn get "$(k api-resources --namespaced --verbs=list -o name | grep '\.stacks\.org$' | paste -sd, -)" \
+    -o yaml > "$OUT/resources.yaml" 2>&1 || true
   kn get events --sort-by=.lastTimestamp > "$OUT/events.txt" 2>&1 || true
   for pod in $(kn get pods -o name 2>/dev/null); do
     kn logs "$pod" --all-containers --prefix --tail=5000 > "$OUT/logs/${pod#pod/}.log" 2>&1 || true
