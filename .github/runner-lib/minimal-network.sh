@@ -13,6 +13,36 @@ k() { kubectl --kubeconfig "$KCFG" --context "$CTX" "$@"; }
 kn() { k -n "$NS" "$@"; }
 stamp() { date -u +%H:%M:%S; }
 conditions() { kn get stacksnetwork network -o jsonpath='{range .status.conditions[*]}{.type}={.status}/{.reason} {end}'; }
+# Bitcoin height, highest Stacks height, and ready/total Pods per participant kind
+# (e.g. StacksNode=1/1) with total restarts, from the API status and Pod labels.
+progress() {
+  local btc stx pods
+  btc="$(kn get stacksnetwork network -o jsonpath='{.status.burnchainObservations.bitcoin.height}' 2>/dev/null)"
+  stx="$(kn get stacksnetworkparticipants -o jsonpath='{range .items[*]}{.status.runtime.protocol.stacksHeight}{"\n"}{end}' 2>/dev/null | sort -n | tail -1)"
+  pods="$(kn get pods -o jsonpath='{range .items[*]}{.metadata.labels.network\.stacks\.org/participant-kind}{"\t"}{.status.phase}{"\t"}{.status.containerStatuses[*].ready}{"\t"}{.status.containerStatuses[*].restartCount}{"\n"}{end}' 2>/dev/null |
+    awk -F'\t' '$1 != "" && $2 != "Succeeded" {
+        total[$1]++; if ($2 == "Running" && $3 !~ /false/) ready[$1]++
+        n = split($4, r, " "); for (i = 1; i <= n; i++) restarts += r[i]
+      }
+      END { for (k in total) printf "%s=%d/%d\n", k, ready[k], total[k]; printf "~restarts=%d\n", restarts }' |
+    sort | tr -d '~' | paste -sd' ' -)"
+  echo "bitcoin=${btc:--} stacks=${stx:--} $pods"
+}
+# Evidence is lost with the namespace and the runner: save it before teardown or on failure.
+collect() {
+  mkdir -p "$OUT/logs"
+  kn get pods -o wide > "$OUT/pods.txt" 2>&1 || true
+  kn get stacksnetwork network -o yaml > "$OUT/network.yaml" 2>&1 || true
+  kn get stacksnetworkparticipants -o yaml > "$OUT/participants.yaml" 2>&1 || true
+  kn get events --sort-by=.lastTimestamp > "$OUT/events.txt" 2>&1 || true
+  for pod in $(kn get pods -o name 2>/dev/null); do
+    kn logs "$pod" --all-containers --prefix --tail=5000 > "$OUT/logs/${pod#pod/}.log" 2>&1 || true
+    kn logs "$pod" --all-containers --prefix --previous --tail=1000 > "$OUT/logs/${pod#pod/}.previous.log" 2>/dev/null ||
+      rm -f "$OUT/logs/${pod#pod/}.previous.log"
+  done
+}
+on_exit() { local status=$?; if [ "$status" -ne 0 ]; then collect; fi; }
+trap on_exit EXIT
 mkdir -p "$OUT"
 
 # Map the kind node names in the example onto this cluster.
@@ -28,10 +58,13 @@ echo "$(stamp) resolved: $(conditions)"
 kn patch stacksnetwork network --type=merge -p '{"spec":{"operation":"Running"}}' >/dev/null
 start=$(date +%s)
 echo "$(stamp) running"
-until conditions | grep -q 'Initialized=True'; do
-  if (( $(date +%s) - start > 2400 )); then echo "$(stamp) not initialized after 40 min: $(conditions)"; exit 1; fi
+last=""
+until [[ "$last" == *Initialized=True* ]]; do
+  if (( $(date +%s) - start > 2400 )); then echo "$(stamp) not initialized after 40 min"; exit 1; fi
   sleep 30
-  echo "$(stamp) +$(( $(date +%s) - start ))s $(conditions)"
+  current="$(conditions)"
+  if [ "$current" != "$last" ]; then echo "$(stamp) conditions: $current"; last="$current"; fi
+  echo "$(stamp) +$(( $(date +%s) - start ))s $(progress)"
 done
 echo "initialized_seconds=$(( $(date +%s) - start ))" | tee "$OUT/initialized.env"
 
@@ -41,7 +74,7 @@ echo "$(stamp) progress $(info)"
 sleep 60
 echo "$(stamp) progress $(info)"
 k get --raw "/api/v1/namespaces/$NS/services/$rpc:20443/proxy/v2/pox" | jq -c '{epoch: .current_epoch, cycle: .current_cycle.id}'
-kn get pods -o wide > "$OUT/pods.txt"
+collect
 
 kn patch stacksnetwork network --type=merge -p '{"spec":{"operation":"Stopped"}}' >/dev/null
 kn wait stacksnetwork/network --for=jsonpath='{.status.phase}'=Stopped --timeout=5m
