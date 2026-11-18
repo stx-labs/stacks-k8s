@@ -18,9 +18,10 @@ kubectl -n lab-30 get stacksnetworkparticipants
 `Paused` cooperatively stops managed sends while preserving worker processes.
 It does not stop actor consensus or networking. Set `Running` to resume.
 `Stopped` is terminal for that network: workers drain and actors scale to zero
-with confirmed termination. A stopped network cannot be resumed; create a new
-root after deletion. Participant-level controls are workload-specific; see
-[lifecycle controls](../design/public-api/lifecycle.md).
+with confirmed termination. An actor whose init container failed, so its main
+container never started, is confirmed once kubelet marks its Pod terminal.
+A stopped network cannot be resumed; create a new root after deletion.
+Participant-level controls are workload-specific; see [lifecycle controls](../design/public-api/lifecycle.md).
 
 Reapplying a manifest also reapplies its `operation`; a manifest containing
 `Paused` pauses an already running network. Edit the desired declaration rather

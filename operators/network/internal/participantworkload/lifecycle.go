@@ -218,14 +218,7 @@ func terminated(pod *corev1.Pod) bool {
 		return false
 	}
 	for _, declared := range pod.Spec.Containers {
-		confirmed := false
-		for _, status := range pod.Status.ContainerStatuses {
-			if status.Name == declared.Name && status.State.Terminated != nil &&
-				status.State.Terminated.Reason != common.ReasonContainerStatusUnknown {
-				confirmed = true
-			}
-		}
-		if !confirmed {
+		if !containerStopped(declared.Name, pod.Status.ContainerStatuses) {
 			return false
 		}
 	}
@@ -236,6 +229,30 @@ func terminated(pod *corev1.Pod) bool {
 	}
 
 	return true
+}
+
+// containerStopped confirms that a declared container of a terminal Pod runs no process: kubelet
+// reported its exit, or it never started. A container that never started has no process to wait
+// for; kubelet leaves it Waiting when an init container fails. An unknown or missing status is
+// evidence of neither: kubelet also reports ContainerStatusUnknown for a container whose image
+// was never pulled, which cannot be told apart from a lost running container.
+func containerStopped(name string, statuses []corev1.ContainerStatus) bool {
+	for _, status := range statuses {
+		if status.Name != name {
+			continue
+		}
+		if exit := status.State.Terminated; exit != nil {
+			return exit.Reason != common.ReasonContainerStatusUnknown
+		}
+		return neverStarted(status)
+	}
+	return false
+}
+
+// neverStarted requires a Waiting container with no container ID and no earlier run.
+func neverStarted(status corev1.ContainerStatus) bool {
+	return status.State.Waiting != nil && status.ContainerID == "" && status.RestartCount == 0 &&
+		status.LastTerminationState.Terminated == nil && status.LastTerminationState.Running == nil
 }
 
 // stopActor preserves the RPC process until the executor acknowledges terminal drainage.
