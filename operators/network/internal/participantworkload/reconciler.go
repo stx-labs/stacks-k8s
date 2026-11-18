@@ -23,12 +23,18 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
+
+// actorWorkers reconciles independent participants in parallel. Each Stacks node poll runs
+// the full reconcile, so a serial pass over every node must stay within the observation
+// freshness window for prepared-set gates to see the whole cohort fresh at once.
+const actorWorkers = 8
 
 // Reconciler owns one actor kind's workload facts, never admission or protocol mutations.
 type Reconciler struct {
@@ -571,8 +577,9 @@ func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 			},
 		}
 	})
-	controller := ctrl.NewControllerManagedBy(manager).
+	registration := ctrl.NewControllerManagedBy(manager).
 		Named("participant-"+strings.ToLower(string(r.kind()))+"-workload").
+		WithOptions(controller.Options{MaxConcurrentReconciles: actorWorkers}).
 		For(&api.StacksNetworkParticipant{}, builder.WithPredicates(participantChanges)).
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).
@@ -596,7 +603,7 @@ func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 				return requests
 			},
 		)
-		controller = controller.Watches(&bitcoin.BitcoinInitialization{}, dependencies).
+		registration = registration.Watches(&bitcoin.BitcoinInitialization{}, dependencies).
 			Watches(&bitcoin.BitcoinExecution{}, dependencies).
 			Watches(
 				&api.StacksNetworkParticipant{},
@@ -610,7 +617,7 @@ func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 				}}),
 			)
 	}
-	return controller.Complete(r)
+	return registration.Complete(r)
 }
 
 // actorRuntimeDependencyChanged excludes protocol telemetry from actor configuration watches.
