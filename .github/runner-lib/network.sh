@@ -95,7 +95,8 @@ initialization_summary() {
     | (map(.gap) | sort) as $g
     | "blocks_\(.[0].interval)=\($g | length)/\($g | pct(0.5))/\($g | pct(0.9))/\(($g | add) / ($g | length) * 10 | round / 10)"'
   sort -n "$OUT/observation-ages.txt" | awk '{ a[NR] = $1 } END {
-    if (NR) printf "observation_age_max=%d\nobservation_age_p90=%d\n", a[NR], a[int(NR * 0.9) > 0 ? int(NR * 0.9) : 1] }'
+    if (NR) { i = int(NR * 0.9); if (i < 1) i = 1
+      printf "observation_age_max=%d\nobservation_age_p90=%d\n", a[NR], a[i] } }'
   if [ -s "$OUT/cpu-running.txt" ] && [ -s "$OUT/cpu-initialized.txt" ]; then
     cat "$OUT/cpu-running.txt" "$OUT/cpu-initialized.txt" | awk '
       { for (i = 2; i <= 9; i++) v[NR, i] = $i }
