@@ -282,6 +282,7 @@ func TestInputRoutingBeforeParticipantAdmission(t *testing.T) {
 	)
 	root.Spec.Genesis = &api.GenesisInput{
 		Allocations: []api.GenesisAllocation{{AccountRef: common.NameRef{Name: "funded"}}},
+		Restore:     &api.GenesisRestore{SnapshotRef: common.NameRef{Name: "seed"}},
 	}
 	root.Spec.EpochScheduleRef = &common.NameRef{Name: "epochs"}
 	c := newWatchClient(t, root)
@@ -289,6 +290,8 @@ func TestInputRoutingBeforeParticipantAdmission(t *testing.T) {
 		&stacks.StacksAccount{ObjectMeta: metav1.ObjectMeta{Name: "missing", Namespace: "lab"}},
 		&stacks.StacksAccount{ObjectMeta: metav1.ObjectMeta{Name: "funded", Namespace: "lab"}},
 		&api.StacksEpochSchedule{ObjectMeta: metav1.ObjectMeta{Name: "epochs", Namespace: "lab"}},
+		// A snapshot created after the network still reaches its root.
+		&api.StacksChainstateSnapshot{ObjectMeta: metav1.ObjectMeta{Name: "seed", Namespace: "lab"}},
 		&metav1.PartialObjectMetadata{
 			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
 			ObjectMeta: metav1.ObjectMeta{Name: "config", Namespace: "lab"},

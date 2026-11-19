@@ -76,6 +76,7 @@ func TestFoundationSchemasAndFreeze(t *testing.T) {
 	}
 	verifyWalletProfileSchema(t, ctx, c)
 	verifyBatchGenerationSchema(t, ctx, c)
+	verifyChainstateSnapshotSchema(t, ctx, c)
 	verifyManagerAndScopedJob(t, ctx, c, cfg, scheme)
 	// Complete example cohorts must survive schema admission without silent field pruning.
 	t.Logf("strictly admitted %d minimal objects", admitExample(t, ctx, c, "minimal.yaml"))
@@ -341,6 +342,7 @@ func TestFoundationSchemasAndFreeze(t *testing.T) {
 	verifyTrafficRecipientReplacement(t, ctx, c, root, request, &network)
 	verifyBootstrapGatePolicyRelease(t, ctx, c, root, request, &network, &genesis, cfg, scheme)
 	verifyRetainedSourceEligibility(t, ctx, c, root, request, &network)
+	verifyChainstateRestore(t, ctx, c, root, account, wallet)
 	// Removing a participant is destructive; its name cannot be used again.
 	removed := network.Spec.Participants[len(network.Spec.Participants)-1]
 	network.Spec.Participants = network.Spec.Participants[:len(network.Spec.Participants)-1]

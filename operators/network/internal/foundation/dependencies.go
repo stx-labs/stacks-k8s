@@ -79,6 +79,8 @@ func (v *dependencyCheck) read(ctx context.Context, b common.Binding) error {
 		obj = &bitcoin.BitcoinBlockSchedule{}
 	case api.KindStacksEpochSchedule:
 		obj = &api.StacksEpochSchedule{}
+	case api.KindStacksChainstateSnapshot:
+		obj = &api.StacksChainstateSnapshot{}
 	case common.KindSecret:
 		obj = &metav1.PartialObjectMetadata{
 			TypeMeta: metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: common.KindSecret},

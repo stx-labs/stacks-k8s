@@ -339,8 +339,13 @@ func actorContainer(kind api.ParticipantKind) string {
 	}
 }
 
-// actorWorkload mounts the exact stable event token only for the node and paired signer.
-func actorWorkload(p *api.StacksNetworkParticipant, state *api.ParticipantRuntimeStatus) (*appsv1.StatefulSet, error) {
+// actorWorkload mounts the exact stable event token only for the node and paired signer. A
+// restored actor first fills its data volume from the snapshot archive.
+func actorWorkload(
+	p *api.StacksNetworkParticipant,
+	state *api.ParticipantRuntimeStatus,
+	restore *chainstateRestore,
+) (*appsv1.StatefulSet, error) {
 	credentials := ""
 	if state.ActorRPCSecretRef != nil {
 		credentials = state.ActorRPCSecretRef.Name
@@ -388,6 +393,13 @@ func actorWorkload(p *api.StacksNetworkParticipant, state *api.ParticipantRuntim
 		check.Ports = nil
 		check.ReadinessProbe = nil
 		pod.InitContainers = []corev1.Container{check}
+	}
+	if restore != nil {
+		pod := &workload.Spec.Template.Spec
+		pod.InitContainers = append(
+			[]corev1.Container{restoreInit(restore, *pod.Containers[0].Resources.DeepCopy())},
+			pod.InitContainers...,
+		)
 	}
 	return workload, nil
 }

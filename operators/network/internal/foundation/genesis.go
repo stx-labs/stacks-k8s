@@ -126,6 +126,23 @@ func compileGenesis(
 			objectref.WithFingerprint(objectref.EpochSchedule(&schedule), Digest(schedule.Spec)),
 		)
 	}
+	var snapshot *api.StacksChainstateSnapshot
+	if root.Spec.Genesis != nil && root.Spec.Genesis.Restore != nil {
+		snapshot = &api.StacksChainstateSnapshot{}
+		if err := r.Get(
+			ctx,
+			types.NamespacedName{Namespace: root.Namespace, Name: root.Spec.Genesis.Restore.SnapshotRef.Name},
+			snapshot,
+		); err != nil ||
+			snapshot.DeletionTimestamp != nil {
+			return spec, fmt.Errorf("chainstate snapshot unavailable")
+		}
+		// The frozen artifact records which snapshot its restored chain came from.
+		spec.Source.Dependencies = append(
+			spec.Source.Dependencies,
+			objectref.WithFingerprint(objectref.ChainstateSnapshot(snapshot), Digest(snapshot.Spec)),
+		)
+	}
 	if root.Spec.Genesis != nil && root.Spec.Genesis.PoX != nil {
 		spec.Chain.PoX = *root.Spec.Genesis.PoX
 	}
@@ -191,6 +208,7 @@ func compileGenesis(
 		return nil
 	}
 	var production *candidate
+	cohort := map[string]restoreMember{}
 	for _, name := range names {
 		c := all[name]
 		v := c.configuration
@@ -309,6 +327,7 @@ func compileGenesis(
 			req.BitcoinInitialization = v.BitcoinBlockProduction.Initialization
 		}
 		spec.Bootstrap.Requirements = append(spec.Bootstrap.Requirements, req)
+		cohort[name] = restoreMember{requirement: req, configuration: v}
 	}
 	for _, kind := range []api.ParticipantKind{
 		api.ParticipantBitcoinNode,
@@ -382,6 +401,28 @@ func compileGenesis(
 			spec.Source.Dependencies,
 			objectref.WithFingerprint(objectref.Account(a), a.Status.Digest),
 		)
+	}
+	if snapshot != nil {
+		restored, archives, err := validateRestore(
+			snapshot,
+			Digest(spec.Chain),
+			spec.Bootstrap.Gates[len(spec.Bootstrap.Gates)-1].BitcoinCeiling,
+			cohort,
+			root.Spec.Genesis.Restore.StacksImagePolicy,
+		)
+		if err != nil {
+			return spec, err
+		}
+		// Freeze what the restored network uses, so the snapshot resource is not needed after freeze.
+		spec.Source.Restored = restored
+		for name, archive := range archives {
+			uid := cohort[name].requirement.Participant.UID
+			for i := range spec.Bootstrap.Requirements {
+				if spec.Bootstrap.Requirements[i].Participant.UID == uid {
+					spec.Bootstrap.Requirements[i].RestoredArchive = archive.DeepCopy()
+				}
+			}
+		}
 	}
 	spec.Source.InputDigest = semanticInputDigest(spec, all)
 	data, err := json.Marshal(spec)

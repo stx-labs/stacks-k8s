@@ -35,7 +35,7 @@ func TestFoundationChartChecksEveryExistingCRD(t *testing.T) {
 		}
 		names = append(names, crd.Metadata.Name)
 	}
-	if len(names) != 19 {
+	if len(names) != 20 {
 		t.Fatalf("CRD inventory: %d", len(names))
 	}
 	for _, incompatible := range append([]string{""}, names...) {

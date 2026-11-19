@@ -451,6 +451,38 @@ spec:
                     x-kubernetes-validations:
                     - message: prepare must be shorter than reward cycle
                       rule: self.prepareLength < self.rewardCycleLength
+                  restore:
+                    description: Restore starts the network from a captured chainstate
+                      instead of initializing it from genesis.
+                    properties:
+                      snapshotRef:
+                        description: SnapshotRef selects a StacksChainstateSnapshot
+                          in the network namespace.
+                        properties:
+                          name:
+                            description: Name is the referenced name; the containing
+                              field determines its kind.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      stacksImagePolicy:
+                        default: Exact
+                        description: |-
+                          StacksImagePolicy decides whether Stacks nodes and signers may run images other than the ones
+                          that wrote the snapshot, for example to compare builds on the same chain. Exact requires the
+                          same images; AllowDifferent accepts others and records each change in the frozen genesis.
+                          Bitcoin node images must always match.
+                        enum:
+                        - Exact
+                        - AllowDifferent
+                        type: string
+                    required:
+                    - snapshotRef
+                    type: object
                 type: object
               operation:
                 default: Running
@@ -4511,6 +4543,29 @@ spec:
                       every gate.
                     maxLength: 128
                     type: string
+                  restoredFrom:
+                    description: |-
+                      RestoredFrom pins the chainstate snapshot whose restore completed every gate at once,
+                      when the network was restored instead of initialized from genesis.
+                    properties:
+                      fingerprint:
+                        description: Fingerprint identifies public content when relevant.
+                        type: string
+                      kind:
+                        description: Kind identifies the API kind or participant kind.
+                        type: string
+                      name:
+                        description: Name is the public resource name.
+                        type: string
+                      uid:
+                        description: UID prevents same-name replacement from inheriting
+                          authority.
+                        type: string
+                    required:
+                    - kind
+                    - name
+                    - uid
+                    type: object
                 required:
                 - authorizedCeiling
                 - completed

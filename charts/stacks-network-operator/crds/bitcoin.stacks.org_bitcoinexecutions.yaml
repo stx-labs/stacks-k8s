@@ -102,11 +102,13 @@ spec:
                     type: object
                   mode:
                     description: |-
-                      Mode distinguishes frozen bootstrap advancement from completed-initialization baseline authority.
+                      Mode distinguishes frozen bootstrap advancement from completed-initialization baseline authority,
+                      and the single block that refreshes a chain restored from a snapshot.
                       Omission preserves existing bootstrap records.
                     enum:
                     - Bootstrap
                     - Baseline
+                    - Restore
                     type: string
                   number:
                     description: Number is monotonic within the initialization record.
@@ -1006,11 +1008,13 @@ spec:
                         type: object
                       mode:
                         description: |-
-                          Mode distinguishes frozen bootstrap advancement from completed-initialization baseline authority.
+                          Mode distinguishes frozen bootstrap advancement from completed-initialization baseline authority,
+                          and the single block that refreshes a chain restored from a snapshot.
                           Omission preserves existing bootstrap records.
                         enum:
                         - Bootstrap
                         - Baseline
+                        - Restore
                         type: string
                       number:
                         description: Number is monotonic within the initialization
@@ -1533,11 +1537,13 @@ spec:
                             type: object
                           mode:
                             description: |-
-                              Mode distinguishes frozen bootstrap advancement from completed-initialization baseline authority.
+                              Mode distinguishes frozen bootstrap advancement from completed-initialization baseline authority,
+                              and the single block that refreshes a chain restored from a snapshot.
                               Omission preserves existing bootstrap records.
                             enum:
                             - Bootstrap
                             - Baseline
+                            - Restore
                             type: string
                           number:
                             description: Number is monotonic within the initialization

@@ -17,6 +17,8 @@ const (
 	reasonReady = "Ready"
 	// reasonResolvingConfiguration reports ResolvingConfiguration.
 	reasonResolvingConfiguration = "ResolvingConfiguration"
+	// reasonRestoreFailed reports RestoreFailed.
+	reasonRestoreFailed = "RestoreFailed"
 	// reasonRestarting reports Restarting.
 	reasonRestarting = "Restarting"
 	// reasonRuntimeIdentityUnavailable reports RuntimeIdentityUnavailable.

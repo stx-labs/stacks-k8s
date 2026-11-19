@@ -328,22 +328,28 @@ func TestFreshAdmissionAndGenesisGates(t *testing.T) {
 		Spec: api.StacksGenesisSpec{Source: api.GenesisSource{NetworkUID: root.UID}},
 	}
 	root.Status.GenesisRef = binding("StacksGenesis", genesis)
+	root.Status.GenesisRef.Fingerprint = digest(genesis.Spec)
 	root.Status.GenesisDigest = digest(genesis.Spec.Chain)
 	c := testClient(t, p, root, genesis)
 	r := Reconciler{Client: c, Reader: c}
-	if err := r.authorized(context.Background(), root, p); err != nil {
-		t.Fatal(err)
+	if verified, err := r.authorized(context.Background(), root, p); err != nil || verified.UID != genesis.UID {
+		t.Fatalf("authorized: %v, genesis %+v", err, verified)
 	}
+	// Restore inputs live outside spec.chain, so only the full-spec fingerprint covers them.
+	restored := genesis.Spec.DeepCopy()
+	restored.Source.Restored = &api.RestoredChainstate{Image: "snapshot:other"}
 	for _, mutate := range []func(*api.StacksNetwork){
 		func(n *api.StacksNetwork) { n.Spec.Operation = "Stopped" },
 		func(n *api.StacksNetwork) { n.Status.GenesisRef.UID = "replacement" },
 		func(n *api.StacksNetwork) { n.Status.GenesisDigest = "corrupt" },
+		func(n *api.StacksNetwork) { n.Status.GenesisRef.Fingerprint = "" },
+		func(n *api.StacksNetwork) { n.Status.GenesisRef.Fingerprint = digest(*restored) },
 		func(n *api.StacksNetwork) { n.Spec.Participants = nil },
 		func(n *api.StacksNetwork) { n.Status.Identities[0].Removing = true },
 	} {
 		current := root.DeepCopy()
 		mutate(current)
-		if err := r.authorized(context.Background(), current, p); err == nil {
+		if _, err := r.authorized(context.Background(), current, p); err == nil {
 			t.Fatal("accepted invalid lifecycle/genesis identity")
 		}
 	}

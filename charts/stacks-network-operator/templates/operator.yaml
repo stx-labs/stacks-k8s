@@ -29,7 +29,7 @@ rules:
     resources: [stacksgeneses]
     verbs: [get, list, watch, create, patch]
   - apiGroups: [network.stacks.org]
-    resources: [stacksepochschedules]
+    resources: [stacksepochschedules, stackschainstatesnapshots]
     verbs: [get, list, watch]
   - apiGroups: [network.stacks.org]
     resources: [stacksnetworks/status, stacksnetworkparticipants/status, stacksepochschedules/status]

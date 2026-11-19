@@ -54,7 +54,7 @@ func TestStacksActorsShareStorageAndTerminationBoundary(t *testing.T) {
 		t.Run(string(kind), func(t *testing.T) {
 			p := stacksParticipantFixture(kind)
 			state := nativeRuntimeFixture()
-			workload, err := actorWorkload(p, state)
+			workload, err := actorWorkload(p, state, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -130,17 +130,17 @@ func TestStacksActorsShareStorageAndTerminationBoundary(t *testing.T) {
 			}
 			other := stacksParticipantFixture(kind)
 			other.UID = "other-uid"
-			before, err := actorWorkload(other, nativeRuntimeFixture())
+			before, err := actorWorkload(other, nativeRuntimeFixture(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			fields, _ := actorFields(p)
 			fields.Image = ptr.To("native-stacks:changed")
-			after, err := actorWorkload(p, state)
+			after, err := actorWorkload(p, state, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			unaffected, err := actorWorkload(other, nativeRuntimeFixture())
+			unaffected, err := actorWorkload(other, nativeRuntimeFixture(), nil)
 			if err != nil || !reflect.DeepEqual(before, unaffected) ||
 				after.Spec.Template.Spec.Containers[0].Image != "native-stacks:changed" {
 				t.Fatal("image change affected another actor")

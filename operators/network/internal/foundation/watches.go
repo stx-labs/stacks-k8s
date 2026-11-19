@@ -56,6 +56,7 @@ func publicInputs() []client.Object {
 		&stacks.StacksContractSet{},
 		&stacks.StacksTransactionProduction{},
 		&api.StacksEpochSchedule{},
+		&api.StacksChainstateSnapshot{},
 	}
 }
 
@@ -93,6 +94,9 @@ func inputReferences(obj client.Object) []string {
 		if v.Spec.Genesis != nil {
 			for _, allocation := range v.Spec.Genesis.Allocations {
 				ref(stacks.KindStacksAccount, &allocation.AccountRef)
+			}
+			if v.Spec.Genesis.Restore != nil {
+				ref(api.KindStacksChainstateSnapshot, &v.Spec.Genesis.Restore.SnapshotRef)
 			}
 		}
 		add(api.KindStacksGenesis, RuntimeName(string(v.UID), "", api.KindStacksGenesis, v.Name, "genesis"))

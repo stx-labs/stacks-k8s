@@ -256,6 +256,9 @@ func (w *Worker) authorizeOffer(ctx context.Context, a admitted, offer *bitcoin.
 	if err := foundation.ValidateAdmissionEligibility(ctx, w.Reader, production); err != nil {
 		return err
 	}
+	if offer.Mode == bitcoin.OfferRestore {
+		return w.authorizeRestoreOffer(ctx, a, offer)
+	}
 	if offer.Mode == bitcoin.OfferBaseline {
 		if err := foundation.ValidatePublicParticipantAdmission(ctx, w.Reader, a.root, a.participant); err != nil {
 			return err

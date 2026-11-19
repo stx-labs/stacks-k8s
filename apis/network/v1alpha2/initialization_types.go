@@ -1,6 +1,7 @@
 package v1alpha2
 
 import (
+	common "github.com/cylewitruk-stacks/stacks-k8s/apis/network/common/v1alpha2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -30,6 +31,9 @@ type InitializationStatus struct {
 	// +listType=map
 	// +listMapKey=name
 	Gates []GateObservation `json:"gates"`
+	// RestoredFrom pins the chainstate snapshot whose restore completed every gate at once,
+	// when the network was restored instead of initialized from genesis.
+	RestoredFrom *common.Binding `json:"restoredFrom,omitempty"`
 }
 
 // GateObservation retains evidence timing independently of pause or later policy changes.

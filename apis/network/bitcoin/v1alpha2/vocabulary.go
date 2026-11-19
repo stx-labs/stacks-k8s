@@ -18,6 +18,8 @@ const (
 	OfferBootstrap OfferMode = "Bootstrap"
 	// OfferBaseline is the Baseline value of OfferMode.
 	OfferBaseline OfferMode = "Baseline"
+	// OfferRestore is the Restore value of OfferMode.
+	OfferRestore OfferMode = "Restore"
 )
 
 // RPCMethod names supported BitcoinArmedRPC.Method values. Unknown input still requires validation.

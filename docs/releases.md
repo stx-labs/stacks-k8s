@@ -75,13 +75,17 @@ Network changes include optional read-only Bitcoin observer sidecars, independen
 selection, attributed burnchain diagnostic status and opt-in first-gate Bitcoin generation
 batching (`initialization.batchGeneration`). Observability changes include
 mandatory actor resource samples, native fault sources, resilient watch reconnection and
-the larger local query profile. Apply generated CRD schema updates explicitly before
+the larger local query profile. The network operator also adds the
+`StacksChainstateSnapshot` CRD and optional `genesis.restore`, which start a new network
+from [captured chain data](network-operator/chainstate-snapshots.md); networks without it
+bootstrap as before. Apply generated CRD schema updates explicitly before
 upgrading; Helm does not upgrade bundled CRDs. These are prepared versions, not a claim
 that images or charts have been published.
 
 The observability module uses gRPC 1.83.1 to address
 [GO-2026-6348](https://pkg.go.dev/vuln/GO-2026-6348). Existing installations need a
 rebuilt image and rollout to receive the fix. Repository tools include independent
-[protocol inspection](../tools/stacks-inspect/README.md) and
-[experiment preflight](../tools/stacks-preflight/README.md) commands; neither is an
+[protocol inspection](../tools/stacks-inspect/README.md),
+[experiment preflight](../tools/stacks-preflight/README.md) and
+[chainstate capture](../tools/stacks-snapshot/README.md) commands; none is an
 operator runtime dependency.

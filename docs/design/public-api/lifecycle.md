@@ -45,7 +45,8 @@ advances the local nonce; uncertainty holds the pending stream without a replay.
 5. Evaluate the fixed profile initialization gates against spec.bootstrap in that
    artifact, not current desired policies or an unavailable historical definition.
    Late additions use the same genesis; they cannot replace missing initial cohort
-   members or shrink unfinished gates.
+   members or shrink unfinished gates. A restored network completes every gate at
+   once instead; see [restore](#restore-from-a-chainstate-snapshot).
    Completed stages never rewind. Deliberate removal can make unfinished bootstrap
    impossible; report that instead of restoring membership or changing genesis.
 
@@ -64,6 +65,44 @@ Equal address/amount allocation aliases count once; conflicting amounts are inva
 Public contract principals resolve without deployed contracts, avoiding a startup
 cycle. Nodes consume one verified genesis through rendered config; missing, replaced
 or corrupt published genesis fails the network, never regenerates from current intent.
+
+## Restore from a chainstate snapshot
+
+genesis.restore selects a [StacksChainstateSnapshot](resources.md#stackschainstatesnapshot);
+without it nothing below applies. Resolution and freeze follow the steps above, plus:
+
+- **Validation.** The candidate is compared with the snapshot on every resolution and again
+  at freeze: genesisDigest, the exact initial cohort (no member missing or extra), public
+  accounts by role, participant links, mining role, stake, registry threshold and signer
+  order, Bitcoin node
+  images, and Stacks node/signer images unless stacksImagePolicy is AllowDifferent. A
+  snapshot below the final initialization ceiling is refused. Any difference reports phase
+  ResolutionError, reason SnapshotMismatch, with every difference in the message, also
+  while Paused. A missing or deleting snapshot reports GenesisInputsUnavailable; applying it
+  later resumes resolution.
+- **Freeze.** StacksGenesis records the snapshot image, Bitcoin tip, accepted image changes
+  and each initial actor's archive, and pins the snapshot. Nothing reads the snapshot
+  resource after freeze.
+- **Actor storage.** Each initial actor's restore-data init container verifies its
+  archive, extracts it into empty storage, drops peer and mempool databases and writes a
+  checksum marker; restarts with a matching marker skip it. A failure or unpullable image
+  reports RestoreFailed.
+- **Bitcoin preparation.** Instead of generating to the first gate, preparation proves the
+  restored chain (snapshot height and tip hash, ready wallets, one mature output per
+  miner), mines exactly one refresh block and records preparedAt. stacks-node refuses a
+  burnchain tip older than two hours; the refresh block makes snapshot age irrelevant. The
+  block is recognized by its accounted receipt, so a retry never mines twice. Preparation
+  reads restore facts only from the exact frozen genesis and blocks if that is unavailable.
+- **Gates.** Every gate completes at preparedAt and status.initialization.restoredFrom pins
+  the snapshot. Stacks actors start after preparation as usual; Initialized still requires
+  its normal post-waterfall facts.
+- **Stacking.** Restored initial stackers run as a later cohort, keeping or renewing from
+  the current cycle; the captured PoX-5 administrator check still applies.
+
+Participants added after a restored network is Initialized follow the ordinary late
+addition rules and start with empty storage: plain nodes sync from peers, signers sign from
+the next reward cycle, and miners need explicit funding and coinbase maturity. Restore
+always creates a new network; Stopped remains terminal.
 
 ## Resolved bindings and live updates
 

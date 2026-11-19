@@ -16,6 +16,7 @@ func TestVocabularyWireValues(t *testing.T) {
 		{"CadenceUniform", CadenceUniform, `"Uniform"`},
 		{"OfferBootstrap", OfferBootstrap, `"Bootstrap"`},
 		{"OfferBaseline", OfferBaseline, `"Baseline"`},
+		{"OfferRestore", OfferRestore, `"Restore"`},
 		{"RPCCreateWallet", RPCCreateWallet, `"CreateWallet"`},
 		{"RPCLoadWallet", RPCLoadWallet, `"LoadWallet"`},
 		{"RPCImportDescriptor", RPCImportDescriptor, `"ImportDescriptor"`},

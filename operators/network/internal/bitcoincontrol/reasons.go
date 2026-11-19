@@ -25,6 +25,8 @@ const (
 	reasonBaselineTargetSelected = "BaselineTargetSelected"
 	// reasonBootstrapGateAuthorityUnavailable reports BootstrapGateAuthorityUnavailable.
 	reasonBootstrapGateAuthorityUnavailable = "BootstrapGateAuthorityUnavailable"
+	// reasonFrozenGenesisUnavailable reports FrozenGenesisUnavailable.
+	reasonFrozenGenesisUnavailable = "FrozenGenesisUnavailable"
 	// reasonCadenceArmed reports CadenceArmed.
 	reasonCadenceArmed = "CadenceArmed"
 	// reasonCadenceUnavailable reports CadenceUnavailable.
@@ -93,6 +95,14 @@ const (
 	reasonReplacementVerificationFailed = "ReplacementVerificationFailed"
 	// reasonReplacementWorkInsufficient reports ReplacementWorkInsufficient.
 	reasonReplacementWorkInsufficient = "ReplacementWorkInsufficient"
+	// reasonRestorePrepared reports RestorePrepared.
+	reasonRestorePrepared = "RestorePrepared"
+	// reasonRestoreRefreshUnacknowledged reports RestoreRefreshUnacknowledged.
+	reasonRestoreRefreshUnacknowledged = "RestoreRefreshUnacknowledged"
+	// reasonRestoredChainDiffers reports RestoredChainDiffers.
+	reasonRestoredChainDiffers = "RestoredChainDiffers"
+	// reasonRestoredWalletsImmature reports RestoredWalletsImmature.
+	reasonRestoredWalletsImmature = "RestoredWalletsImmature"
 	// reasonSchedulerNotEnrolled reports SchedulerNotEnrolled.
 	reasonSchedulerNotEnrolled = "SchedulerNotEnrolled"
 	// reasonSchedulerWaiting reports SchedulerWaiting.

@@ -91,6 +91,7 @@ must distinguish implemented behavior from proposed or unavailable features.
 | [Agent interface](agent-interface.md) | Capability discovery, resource conventions, queries, and agent workflow. |
 | [Security and safety](security-and-safety.md) | Trust boundaries, RBAC, admission, identity, secrets, and blast-radius controls. |
 | [Packaging](packaging.md) | Operator/chart boundaries, optional dependencies, versioning, and qualification. |
+| [Chainstate snapshots](chainstate-snapshots.md) | Restoring new networks from captured chain data: matching rules, restore sequence, keys and limits. |
 | [Roadmap](roadmap.md) | Ordered implementation phases and definitions of done. |
 | [M0 remediation plan](m0-remediation-plan.md) | Authoritative ordered M0.x delivery ledger, stable remediation requirements, and acceptance checklist. |
 
@@ -147,6 +148,7 @@ when permissions, dependencies, or failure domains materially differ.
 | `EvidenceExport` | Future contract | [Observability](observability.md) |
 | Native Chaos Mesh fault kinds | Upstream APIs; qualify directly | [Chaos Mesh](chaos-mesh.md) |
 | `SbtcSigner` | Open, not yet proposed | [Topology](topology.md) |
+| `StacksChainstateSnapshot` | Initial slice implemented; API review open | [Chainstate snapshots](chainstate-snapshots.md) |
 
 ## Decision register
 

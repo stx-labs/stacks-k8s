@@ -25,6 +25,8 @@ func AddToScheme(s *runtime.Scheme) error {
 		&StacksGenesisList{},
 		&StacksEpochSchedule{},
 		&StacksEpochScheduleList{},
+		&StacksChainstateSnapshot{},
+		&StacksChainstateSnapshotList{},
 	)
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil
@@ -224,6 +226,8 @@ type BootstrapRequirement struct {
 	// Accounts preserves public account values used by this participant.
 	// +kubebuilder:validation:MaxItems=1000
 	Accounts []PublicAccount `json:"accounts,omitempty"`
+	// RestoredArchive selects this initial actor's captured data in a restored network.
+	RestoredArchive *SnapshotArchive `json:"restoredArchive,omitempty"`
 }
 
 // PublicAccount retains public account evidence without private material.
@@ -260,9 +264,42 @@ type GenesisSource struct {
 	NetworkUID types.UID `json:"networkUID"`
 	// InputDigest identifies captured semantic inputs.
 	InputDigest string `json:"inputDigest"`
+	// Restored freezes what a network restored from a chainstate snapshot uses from it, so the
+	// snapshot resource is required only until freeze. Dependencies still pins the snapshot.
+	Restored *RestoredChainstate `json:"restored,omitempty"`
 	// Dependencies pins genesis-source identities.
 	// +kubebuilder:validation:MaxItems=1000
 	Dependencies []common.Binding `json:"dependencies,omitempty"`
+}
+
+// RestoredChainstate records, at freeze, the chainstate snapshot facts a restored network uses.
+type RestoredChainstate struct {
+	// Image carries the actor archives. Every restored actor start runs it, so it must stay
+	// available while the network exists.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=512
+	Image string `json:"image"`
+	// Bitcoin is the snapshot's Bitcoin tip, which restored preparation proves before refreshing it.
+	Bitcoin SnapshotBitcoinTip `json:"bitcoin"`
+	// ImageChanges lists the Stacks actors that run a different image than the one that wrote their
+	// restored data, as the restore's stacksImagePolicy allowed.
+	// +kubebuilder:validation:MaxItems=1000
+	// +listType=map
+	// +listMapKey=participant
+	ImageChanges []RestoredImageChange `json:"imageChanges,omitempty"`
+}
+
+// RestoredImageChange records one actor that runs another image on restored data.
+type RestoredImageChange struct {
+	// Participant is the network-relative instance name.
+	// +kubebuilder:validation:MaxLength=63
+	Participant string `json:"participant"`
+	// SnapshotImage is the image that wrote the restored data.
+	// +kubebuilder:validation:MaxLength=512
+	SnapshotImage string `json:"snapshotImage"`
+	// Image is the image that runs on the restored data.
+	// +kubebuilder:validation:MaxLength=512
+	Image string `json:"image"`
 }
 
 // StacksGenesisSpec is immutable after a single successful creation.

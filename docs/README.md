@@ -11,6 +11,8 @@
 - [Stacks production and initialization](network-operator/stacks-production.md)
 - [PoX-4/PoX-5](network-operator/pox5.md)
 - [Custom actor images](network-operator/actor-images.md)
+- [Chainstate snapshots](network-operator/chainstate-snapshots.md): capture once, restore new networks
+  without bootstrap
 - [Installation compatibility](network-operator/migration.md)
 
 ## Experiments and observation

@@ -47,6 +47,8 @@ const (
 	reasonRetainedPolicyEligible = "RetainedPolicyEligible"
 	// reasonRuntimeNotImplemented reports RuntimeNotImplemented.
 	reasonRuntimeNotImplemented = "RuntimeNotImplemented"
+	// reasonSnapshotMismatch reports SnapshotMismatch.
+	reasonSnapshotMismatch = "SnapshotMismatch"
 	// reasonTopologyConflict reports TopologyConflict.
 	reasonTopologyConflict = "TopologyConflict"
 	// reasonUnsupportedWalletProfile reports UnsupportedWalletProfile.

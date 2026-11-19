@@ -136,6 +136,15 @@ func (s *Scheduler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.R
 		record.Status.NextOpportunityAt = nil
 		return report(bitcoin.InitializationAbandoned, api.ReasonNetworkStopped)
 	}
+	// A restored chain is already past every frozen ceiling: it is proven, not generated.
+	chainstate, e := restoredChainstate(ctx, s.Reader, root, record)
+	if e != nil {
+		record.Status.NextOpportunityAt = nil
+		return report(bitcoin.InitializationHeld, reasonFrozenGenesisUnavailable)
+	}
+	if chainstate != nil {
+		return s.reconcileRestore(ctx, root, record, chainstate, report)
+	}
 	if record.Status.PreparedAt == nil && record.Status.FirstCeilingObservedAt != nil &&
 		!s.Now().Before(record.Status.FirstCeilingObservedAt.Add(120*time.Second)) {
 		record.Status.NextOpportunityAt = nil
@@ -159,118 +168,21 @@ func (s *Scheduler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.R
 		record.Status.NextOpportunityAt = nil
 		return report(bitcoin.InitializationPaused, api.ReasonDesiredPause)
 	}
-	allRecords := make(map[string]*bitcoin.BitcoinExecution, len(root.Status.Bitcoin.ExecutionRefs))
-	for _, ref := range root.Status.Bitcoin.ExecutionRefs {
-		candidate := &bitcoin.BitcoinExecution{}
-		if e := s.Reader.Get(ctx, client.ObjectKey{
-			Namespace: root.Namespace,
-			Name:      ref.Name,
-		}, candidate); e != nil {
-			return report(bitcoin.InitializationBlocked, reasonExecutionRecordUnavailable)
-		}
-		if candidate.UID != ref.UID {
-			return report(bitcoin.InitializationBlocked, reasonExecutionRecordReplaced)
-		}
-		allRecords[string(candidate.Spec.Participant.UID)] = candidate
+	allRecords, reason := s.executions(ctx, root)
+	if reason != "" {
+		return report(bitcoin.InitializationBlocked, reason)
 	}
 	if target := allRecords[string(record.Spec.Target.UID)]; target != nil {
 		accountBootstrapReceipt(root, record, target)
 	}
-	var target *bitcoin.BitcoinExecution
-	var height int64 = -1
-	tip := ""
-	mature := map[string]int32{}
-	// Observe the frozen target first so another node cannot postpone the ceiling deadline.
-	nodes := make([]common.Binding, 0, len(record.Spec.Nodes))
-	for _, node := range record.Spec.Nodes {
-		if node.UID == record.Spec.Target.UID {
-			nodes = append(nodes, node)
-		}
+	view, phase, reason := s.converge(ctx, root, record, allRecords)
+	if view.ceilingObservedAt != nil && record.Status.FirstCeilingObservedAt == nil {
+		record.Status.FirstCeilingObservedAt = view.ceilingObservedAt
 	}
-	for _, node := range record.Spec.Nodes {
-		if node.UID != record.Spec.Target.UID {
-			nodes = append(nodes, node)
-		}
+	if reason != "" {
+		return report(phase, reason)
 	}
-	for _, node := range nodes {
-		execution := allRecords[string(node.UID)]
-		if execution == nil || execution.Spec.NetworkUID != root.UID || !metav1.IsControlledBy(execution, root) {
-			return report(bitcoin.InitializationBlocked, reasonExecutionBindingUnavailable)
-		}
-		if node.UID == record.Spec.Target.UID {
-			target = execution
-		}
-		if execution.Status.Armed != nil {
-			return report(bitcoin.InitializationWaiting, reasonRPCOutstanding)
-		}
-		observation := execution.Status.Observation
-		if observation == nil || s.Now().Sub(observation.ObservedAt.Time) > s.Freshness ||
-			observation.ObservedAt.After(s.Now()) {
-			return report(bitcoin.InitializationWaiting, reasonNodeObservationUnavailable)
-		}
-		p := &api.StacksNetworkParticipant{}
-		if e := s.Reader.Get(
-			ctx,
-			client.ObjectKey{Namespace: root.Namespace, Name: node.Name},
-			p,
-		); e != nil ||
-			p.UID != node.UID ||
-			!participantCurrent(
-				root,
-				p,
-			) ||
-			p.Status.Runtime == nil ||
-			p.Status.Runtime.PodRef == nil ||
-			p.Status.Runtime.PodRef.UID != observation.Target.Pod.UID ||
-			p.Status.Runtime.ContainerID != observation.Target.ContainerID ||
-			p.Status.Admission.PolicyDigest != observation.Target.PolicyDigest ||
-			p.Status.Runtime.ConfigRef == nil ||
-			*p.Status.Runtime.ConfigRef != observation.Target.Configuration ||
-			p.Status.Runtime.RPCSecretRef == nil ||
-			*p.Status.Runtime.RPCSecretRef != observation.Target.Credentials {
-			return report(bitcoin.InitializationWaiting, reasonNodeObservationIdentityChanged)
-		}
-		if node.UID == record.Spec.Target.UID && observation.Height >= record.Spec.MinimumHeight &&
-			record.Status.FirstCeilingObservedAt == nil {
-			observed := observation.ObservedAt
-			record.Status.FirstCeilingObservedAt = &observed
-		}
-		if height < 0 {
-			height, tip = observation.Height, observation.Tip
-		} else if height != observation.Height || tip != observation.Tip {
-			return report(bitcoin.InitializationWaiting, reasonCoreViewsDiverged)
-		}
-		expectedWallets := ptr.Deref(p.Status.Admission.Configuration.BitcoinNode.WalletRefs, nil)
-		if len(observation.Wallets) != len(expectedWallets) {
-			return report(bitcoin.InitializationWaiting, reasonWalletInventoryIncomplete)
-		}
-		for _, ref := range expectedWallets {
-			found := false
-			for _, observed := range observation.Wallets {
-				for _, bound := range p.Status.Admission.Dependencies {
-					found = found ||
-						bound.Kind == bitcoin.KindBitcoinWallet &&
-							bound.Name == ref.Name &&
-							bound.UID == observed.Wallet.UID &&
-							bound.Fingerprint == observed.Wallet.Fingerprint
-				}
-			}
-			if !found {
-				return report(bitcoin.InitializationWaiting, reasonWalletIdentityUnavailable)
-			}
-		}
-		for _, wallet := range observation.Wallets {
-			if !wallet.Ready {
-				return report(bitcoin.InitializationWaiting, reasonWalletsPreparing)
-			}
-			if wallet.MatureOutputs > mature[string(wallet.Wallet.UID)] {
-				mature[string(wallet.Wallet.UID)] = wallet.MatureOutputs
-			}
-		}
-	}
-	if target == nil || height < 0 {
-		return report(bitcoin.InitializationBlocked, reasonInitializationTargetUnavailable)
-	}
+	target, height, tip, mature := view.target, view.height, view.tip, view.mature
 	if height > authority.gate.BitcoinCeiling {
 		return report(bitcoin.InitializationBlocked, api.ReasonFrozenCeilingExceeded)
 	}

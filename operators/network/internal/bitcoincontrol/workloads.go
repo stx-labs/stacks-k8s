@@ -341,6 +341,8 @@ func workerResourcesWithActions(
 		}
 	}
 	rule(api.GroupVersion.Group, api.ResourceStacksNetworkParticipant, participants, "get")
+	// The genesis also carries a restored network's snapshot facts, so the worker never reads the
+	// snapshot resource itself.
 	rule(api.GroupVersion.Group, api.ResourceStacksGenesis, []string{init.Spec.Genesis.Name}, "get")
 	rule(bitcoin.GroupVersion.Group, bitcoin.ResourceBitcoinExecution, []string{record.Name}, "get")
 	rule(bitcoin.GroupVersion.Group, bitcoin.ResourceBitcoinExecution+"/status", []string{record.Name}, "update")

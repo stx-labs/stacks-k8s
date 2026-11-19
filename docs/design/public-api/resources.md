@@ -196,6 +196,7 @@ spec:
 | epochScheduleRef or epochSchedule | Exclusive named or inline {epochs: [...]} input; omission selects the release's built-in schedule. Immutable from creation. |
 | genesis.allocations | Explicit accountRef/amountMicroSTX list; equal address/amount aliases count once, conflicting amounts invalid. Immutable from creation. |
 | genesis.pox | {rewardCycleLength: 20, prepareLength: 5}; positive prepare shorter than cycle. Immutable from creation. |
+| genesis.restore | Optional {snapshotRef, stacksImagePolicy}: start from a [chainstate snapshot](#stackschainstatesnapshot) in the namespace instead of initializing from genesis. stacksImagePolicy is Exact (default) or AllowDifferent. Immutable from creation. |
 | participants | Mutable map-list keyed by participant name: kind, definition.ref or typed inline branch, optional typed overrides and control. Includes faucet and other maintenance kinds. |
 | defaults | images.bitcoin/stacksNode/stacksSigner, storage/resources, actorResources and workerPlacement. Immutable from creation; use supported definition/entry overrides for live image/resource changes. |
 | expectedInputDigest | Optional reviewed candidate digest, mutable before freeze and fixed afterward. Gates initial capture, not subsequent topology edits. |
@@ -233,7 +234,9 @@ baseline predicate rather than all participant readiness. status.observationPoli
 the immutable release settings described in [operations](operations.md#observation-policy).
 High-frequency observations stay on each instance. The bounded identities
 ledger prevents accidental instance/worker reuse after removal, as defined in
-[lifecycle](lifecycle.md). It is not a retired-resource archive.
+[lifecycle](lifecycle.md). It is not a retired-resource archive. A restored network
+reports status.initialization completed with restoredFrom pinning the snapshot's
+name/UID/digest; its gates carry the restore time instead of observed progress.
 
 ## StacksNetworkParticipant
 
@@ -321,8 +324,8 @@ artifact UID/digest. It creates no workloads itself.
 | spec.chain.pox | Resolved first burn height, reward-cycle and prepare settings. |
 | spec.chain.allocations | Concrete public principal/amountMicroSTX entries, normalized and deduplicated. |
 | spec.chain.contracts | Public sBTC/PoX contract bindings and source manifest hashes required for node configuration. |
-| spec.source | Network UID, captured inputDigest, resolved genesis-source UID/generations and initial participant names/UIDs and compiled policy digests. No entire descriptor specs, private keys or rendered configuration. |
-| spec.bootstrap | Ordered profile gates with their ceilings/cycles and bounded public requirements: participant/dependency UIDs, holder/miner/signer identities, initial mining-enabled roles, stake amounts and required cycle coverage, wallet funding/maturity requirements, and contract/registry expectations. Values needed after controller restart, not only policy digests. |
+| spec.source | Network UID, captured inputDigest, resolved genesis-source UID/generations and initial participant names/UIDs and compiled policy digests. On a restored network, restored freezes the snapshot image, its Bitcoin tip and any accepted Stacks image changes, and dependencies pin the snapshot. No entire descriptor specs, private keys or rendered configuration. |
+| spec.bootstrap | Ordered profile gates with their ceilings/cycles and bounded public requirements: participant/dependency UIDs, holder/miner/signer identities, initial mining-enabled roles, stake amounts and required cycle coverage, wallet funding/maturity requirements, and contract/registry expectations; on a restored network, each initial actor's restoredArchive. Values needed after controller restart, not only policy digests. |
 | status | Canonical genesisDigest over spec.chain and publication time. Source/cohort provenance is excluded from the chain digest. |
 
 Creation captures validated chain data, initial cohort and bootstrap requirements together.
@@ -343,6 +346,52 @@ need existing genesis accounts or explicit later funding. Removing an actor/acco
 remove an allocation from chain history. Deletion of the network removes its owned artifact;
 export public genesis/evidence before that if needed. Repeated networks may resolve identical
 chain inputs and digests, while still having distinct UIDs, runtime and data.
+
+## StacksChainstateSnapshot
+
+Immutable `network.stacks.org/v1alpha2` record of chain data captured from an `Initialized`
+network, usually written by the [stacks-snapshot](../../../tools/stacks-snapshot/README.md)
+tool. It holds public facts only and has no status; a network selects it with
+genesis.restore. See [chainstate snapshots](../chainstate-snapshots.md) for the design.
+
+```yaml
+apiVersion: network.stacks.org/v1alpha2
+kind: StacksChainstateSnapshot
+metadata:
+  name: seed
+  namespace: lab-30
+spec:
+  image: localhost/stacks-snapshots/seed:v1
+  genesisDigest: sha256:...
+  participants:
+    - name: btc-01
+      kind: BitcoinNode
+      archive: {path: btc-01.tar.gz, sha256: "...", image: bitcoin/bitcoin:31.1}
+    - name: node-01
+      kind: StacksNode
+      miningEnabled: true
+      bitcoinNode: btc-01
+      accounts: [{role: Identity, address: ST..., publicKey: "02..."}]
+      archive: {path: node-01.tar.gz, sha256: "...", image: ghcr.io/stacks-network/stacks-core:4.0.3}
+    # Signers, stackers and the contract set follow the same shape.
+  bitcoin: {height: 203, blockHash: "..."}
+  stacks: {height: 167, blockHash: "...", indexBlockID: "...", rewardCycle: 10}
+```
+
+| Field | Contents and rules |
+| --- | --- |
+| image | Snapshot image: archives under /snapshot on a BusyBox-compatible base (sh, tar with gzip, sha256sum, cut, cat, find, sync). Restore verifies each checksum, so a tag is accepted. |
+| genesisDigest | The source network's genesisDigest; the restoring network must compile to the same value. |
+| participants | The source initial cohort, keyed by name: kind, public accounts by role (Identity, Signer, Holder, Administrator, Deployer, RegistrySigner, AggregateKey), links (bitcoinNode on a node, node on a signer, signer on a stacker), miningEnabled on a node, amountMicroSTX/lockCycles on a stacker, registryThreshold and registrySigners (signer addresses in registry order) on a contract set. CEL requires each field on, and only on, its kind. |
+| participants[].archive | Required on, and only on, BitcoinNode, StacksNode and StacksSigner: gzip tar path under /snapshot, sha256 and the actor image that wrote the data. |
+| bitcoin, stacks | Captured tips. Bitcoin height must reach the source profile's final initialization ceiling. |
+
+The spec is immutable and every later field must be optional: a restoring network pins the
+spec's digest. Per-network identities, policy digests, worker accounts and the payout wallet
+are deliberately absent, so resources, overrides, placement, workers and payout may differ in
+a restoring network. A network copies what it uses into its StacksGenesis at freeze; the
+resource can be deleted afterwards. The image must stay pullable while a restored network
+exists, since each restored actor start runs it.
 
 ## BitcoinWallet
 

@@ -31,6 +31,12 @@ func (r PublicInputs) PoX5(ctx context.Context, snapshot stacksworker.Snapshot) 
 	if err != nil {
 		return input, err
 	}
+	// Cohort membership, not bootstrap timing: a restored initial stacker skips the bootstrap
+	// cycle (InitialCohort is false) but must keep its captured administrator.
+	initial, err := initialRequirement(genesis, snapshot.Participant)
+	if err != nil {
+		return input, err
+	}
 	captured := false
 	for _, requirement := range genesis.Spec.Bootstrap.Requirements {
 		if requirement.Kind == api.ParticipantStacksStacker && requirement.Participant.UID == snapshot.Participant.UID {
@@ -40,7 +46,7 @@ func (r PublicInputs) PoX5(ctx context.Context, snapshot stacksworker.Snapshot) 
 			}
 		}
 	}
-	if legacy.InitialCohort && !captured {
+	if initial != nil && !captured {
 		return input, errors.New("captured administrator identity unavailable")
 	}
 	input = PoX5Inputs{

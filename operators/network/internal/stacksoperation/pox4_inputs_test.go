@@ -32,6 +32,7 @@ func TestPoX4PublicInputsRequireCurrentAndCapturedIdentities(t *testing.T) {
 		"late-holder-replaced",
 		"late-removed",
 		"late-shared-key",
+		"restored",
 	} {
 		t.Run(change, func(t *testing.T) {
 			scheme := runtime.NewScheme()
@@ -189,6 +190,16 @@ func TestPoX4PublicInputsRequireCurrentAndCapturedIdentities(t *testing.T) {
 				root.Status.GenesisRef.Fingerprint = foundation.Digest(genesis.Spec)
 			}
 			switch change {
+			case "restored":
+				// The restored chain already holds the bootstrap enrollment: the frozen cohort renews.
+				genesis.Spec.Source.Dependencies = append(genesis.Spec.Source.Dependencies, common.Binding{
+					Kind:        api.KindStacksChainstateSnapshot,
+					Name:        "seed",
+					UID:         "seed",
+					Fingerprint: "snapshot-digest",
+				})
+				genesis.Spec.Source.Restored = &api.RestoredChainstate{Image: "snapshot:test"}
+				root.Status.GenesisRef.Fingerprint = foundation.Digest(genesis.Spec)
 			case "late-removed":
 				root.Status.Identities[0].Removing = true
 			case "late-shared-key":
@@ -214,7 +225,24 @@ func TestPoX4PublicInputsRequireCurrentAndCapturedIdentities(t *testing.T) {
 				context.Background(),
 				stacksworker.Snapshot{Network: root, Participant: stacker},
 			)
-			if change == "late" || change == "late-shared-key" {
+			// uncapturedAdministrator points the stacker at an administrator the genesis never captured.
+			uncapturedAdministrator := func() error {
+				admin := account("administrator", strings.Repeat("0", 63)+"3")
+				if e := c.Create(context.Background(), admin); e != nil {
+					t.Fatal(e)
+				}
+				stacker.Status.Admission.Configuration.StacksStacker.AdministratorAccountRef.Name = admin.Name
+				stacker.Status.Admission.Dependencies = append(
+					stacker.Status.Admission.Dependencies,
+					binding("StacksAccount", admin, admin.Status.Digest),
+				)
+				_, e := (PublicInputs{Reader: c, Sender: holder.Status.Identity.Address}).PoX5(
+					context.Background(),
+					stacksworker.Snapshot{Network: root, Participant: stacker},
+				)
+				return e
+			}
+			if change == "late" || change == "late-shared-key" || change == "restored" {
 				pox5, e := (PublicInputs{Reader: c, Sender: holder.Status.Identity.Address}).PoX5(
 					context.Background(),
 					stacksworker.Snapshot{Network: root, Participant: stacker},
@@ -224,6 +252,10 @@ func TestPoX4PublicInputsRequireCurrentAndCapturedIdentities(t *testing.T) {
 					pox5.Administrator != holder.Status.Identity.Address ||
 					pox5.SignerPublicKey != consensus.Status.Identity.PublicKey {
 					t.Fatalf("late current public inputs: %+v %+v %v %v", input, pox5, err, e)
+				}
+				// A restored stacker is still an initial-cohort member: only bootstrap timing is skipped.
+				if change == "restored" && uncapturedAdministrator() == nil {
+					t.Fatal("restored stacker accepted an uncaptured administrator")
 				}
 				return
 			}
@@ -236,19 +268,7 @@ func TestPoX4PublicInputsRequireCurrentAndCapturedIdentities(t *testing.T) {
 					pox5.Administrator != holder.Status.Identity.Address {
 					t.Fatalf("PoX5 shared administrator binding: %+v %v", pox5, e)
 				}
-				admin := account("administrator", strings.Repeat("0", 63)+"3")
-				if e = c.Create(context.Background(), admin); e != nil {
-					t.Fatal(e)
-				}
-				stacker.Status.Admission.Configuration.StacksStacker.AdministratorAccountRef.Name = admin.Name
-				stacker.Status.Admission.Dependencies = append(
-					stacker.Status.Admission.Dependencies,
-					binding("StacksAccount", admin, admin.Status.Digest),
-				)
-				if _, e = (PublicInputs{Reader: c, Sender: holder.Status.Identity.Address}).PoX5(
-					context.Background(),
-					stacksworker.Snapshot{Network: root, Participant: stacker},
-				); e == nil {
+				if uncapturedAdministrator() == nil {
 					t.Fatal("uncaptured administrator accepted")
 				}
 				if err != nil || input.Node == nil || input.TargetCycle != 12 || input.EnrollmentCeiling != 234 ||

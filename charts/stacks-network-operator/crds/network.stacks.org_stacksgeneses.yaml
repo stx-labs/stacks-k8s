@@ -369,6 +369,33 @@ spec:
                             needed before initial gates finish.
                           format: int32
                           type: integer
+                        restoredArchive:
+                          description: RestoredArchive selects this initial actor's
+                            captured data in a restored network.
+                          properties:
+                            image:
+                              description: Image is the actor image that last wrote
+                                the data.
+                              maxLength: 512
+                              minLength: 1
+                              type: string
+                            path:
+                              description: |-
+                                Path names a gzip tar archive directly under /snapshot, with members relative to the actor's
+                                data root.
+                              maxLength: 128
+                              pattern: ^[a-z0-9][-a-z0-9.]*\.tar\.gz$
+                              type: string
+                            sha256:
+                              description: SHA256 is the archive's hex checksum, verified
+                                before extraction.
+                              pattern: ^[0-9a-f]{64}$
+                              type: string
+                          required:
+                          - image
+                          - path
+                          - sha256
+                          type: object
                       required:
                       - kind
                       - participant
@@ -529,6 +556,74 @@ spec:
                   networkUID:
                     description: NetworkUID identifies this independent environment.
                     type: string
+                  restored:
+                    description: |-
+                      Restored freezes what a network restored from a chainstate snapshot uses from it, so the
+                      snapshot resource is required only until freeze. Dependencies still pins the snapshot.
+                    properties:
+                      bitcoin:
+                        description: Bitcoin is the snapshot's Bitcoin tip, which
+                          restored preparation proves before refreshing it.
+                        properties:
+                          blockHash:
+                            description: BlockHash is the captured block hash as Bitcoin
+                              RPC reports it.
+                            pattern: ^[0-9a-f]{64}$
+                            type: string
+                          height:
+                            description: Height is the captured block height.
+                            format: int64
+                            maximum: 4294967295
+                            minimum: 0
+                            type: integer
+                        required:
+                        - blockHash
+                        - height
+                        type: object
+                      image:
+                        description: |-
+                          Image carries the actor archives. Every restored actor start runs it, so it must stay
+                          available while the network exists.
+                        maxLength: 512
+                        minLength: 1
+                        type: string
+                      imageChanges:
+                        description: |-
+                          ImageChanges lists the Stacks actors that run a different image than the one that wrote their
+                          restored data, as the restore's stacksImagePolicy allowed.
+                        items:
+                          description: RestoredImageChange records one actor that
+                            runs another image on restored data.
+                          properties:
+                            image:
+                              description: Image is the image that runs on the restored
+                                data.
+                              maxLength: 512
+                              type: string
+                            participant:
+                              description: Participant is the network-relative instance
+                                name.
+                              maxLength: 63
+                              type: string
+                            snapshotImage:
+                              description: SnapshotImage is the image that wrote the
+                                restored data.
+                              maxLength: 512
+                              type: string
+                          required:
+                          - image
+                          - participant
+                          - snapshotImage
+                          type: object
+                        maxItems: 1000
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - participant
+                        x-kubernetes-list-type: map
+                    required:
+                    - bitcoin
+                    - image
+                    type: object
                 required:
                 - inputDigest
                 - networkUID

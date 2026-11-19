@@ -1,6 +1,10 @@
 package v1alpha2
 
 const (
+	// KindStacksChainstateSnapshot identifies the StacksChainstateSnapshot Kubernetes resource kind.
+	KindStacksChainstateSnapshot = "StacksChainstateSnapshot"
+	// KindStacksChainstateSnapshotList identifies the StacksChainstateSnapshotList Kubernetes resource kind.
+	KindStacksChainstateSnapshotList = "StacksChainstateSnapshotList"
 	// KindStacksEpochSchedule identifies the StacksEpochSchedule Kubernetes resource kind.
 	KindStacksEpochSchedule = "StacksEpochSchedule"
 	// KindStacksEpochScheduleList identifies the StacksEpochScheduleList Kubernetes resource kind.

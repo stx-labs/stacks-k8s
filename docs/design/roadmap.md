@@ -288,11 +288,13 @@ proxy, actor-image, and native-fault qualification before support claims.
 
 ### Reusable chainstate snapshots
 
-**Optional future slice:** reduce repeated bootstrap and synchronization time by
-capturing a network's Bitcoin and Stacks chainstate for use by fresh networks.
-An illustrative `StacksChainstateSnapshot` resource would request bounded capture;
-a future `StacksNetwork` could select the resulting immutable artifact at creation.
-Names and schemas require design review. This is not required for M0–M8 completion.
+**Initial slice implemented:** see [chainstate snapshots](chainstate-snapshots.md).
+An immutable `StacksChainstateSnapshot` records a captured artifact, a new
+`StacksNetwork` selects it with `spec.genesis.restore`, and the
+`stacks-snapshot` tool captures it. Capture is a tool rather than an operator
+resource. Names and schemas remain subject to API review; registry delivery and
+managed-cluster qualification are open. This is not required for M0–M8 completion.
+The requirements this slice was designed against:
 
 - Define coordinated quiescence and application-consistent capture. Cooperative
   pause alone does not prove that actors stopped writing. Evaluate clean shutdown

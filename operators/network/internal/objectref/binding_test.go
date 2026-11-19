@@ -53,6 +53,11 @@ func TestConcreteBindingsMatchWireAndScheme(t *testing.T) {
 			&api.StacksEpochSchedule{},
 			EpochSchedule(&api.StacksEpochSchedule{ObjectMeta: meta}),
 		},
+		{
+			"StacksChainstateSnapshot",
+			&api.StacksChainstateSnapshot{},
+			ChainstateSnapshot(&api.StacksChainstateSnapshot{ObjectMeta: meta}),
+		},
 		{"StacksAccount", &stacks.StacksAccount{}, Account(&stacks.StacksAccount{ObjectMeta: meta})},
 		{"BitcoinWallet", &bitcoin.BitcoinWallet{}, BitcoinWallet(&bitcoin.BitcoinWallet{ObjectMeta: meta})},
 		{

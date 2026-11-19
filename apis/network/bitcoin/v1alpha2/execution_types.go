@@ -48,9 +48,10 @@ type BitcoinBlockOffer struct {
 	Count int32 `json:"count,omitempty"`
 	// Override pins the active timing request, when this opportunity used one.
 	Override *common.Binding `json:"override,omitempty"`
-	// Mode distinguishes frozen bootstrap advancement from completed-initialization baseline authority.
+	// Mode distinguishes frozen bootstrap advancement from completed-initialization baseline authority,
+	// and the single block that refreshes a chain restored from a snapshot.
 	// Omission preserves existing bootstrap records.
-	// +kubebuilder:validation:Enum=Bootstrap;Baseline
+	// +kubebuilder:validation:Enum=Bootstrap;Baseline;Restore
 	Mode OfferMode `json:"mode,omitempty"`
 	// Target binds the sole selected participant for a baseline opportunity.
 	Target *common.Binding `json:"target,omitempty"`

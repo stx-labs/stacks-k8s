@@ -1,0 +1,298 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: stackschainstatesnapshots.network.stacks.org
+spec:
+  group: network.stacks.org
+  names:
+    kind: StacksChainstateSnapshot
+    listKind: StacksChainstateSnapshotList
+    plural: stackschainstatesnapshots
+    singular: stackschainstatesnapshot
+  scope: Namespaced
+  versions:
+  - name: v1alpha2
+    schema:
+      openAPIV3Schema:
+        description: |-
+          StacksChainstateSnapshot describes one captured chainstate artifact that fresh networks may restore.
+          It records public facts only; private keys stay in the restoring network's own Secrets. A
+          restoring network copies what it uses into its frozen genesis, so this resource is needed only
+          until the network freezes; its image must stay available while the network exists.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Spec identifies the artifact and the public inputs a restoring
+              network must reproduce.
+            properties:
+              bitcoin:
+                description: Bitcoin records the captured burnchain tip.
+                properties:
+                  blockHash:
+                    description: BlockHash is the captured block hash as Bitcoin RPC
+                      reports it.
+                    pattern: ^[0-9a-f]{64}$
+                    type: string
+                  height:
+                    description: Height is the captured block height.
+                    format: int64
+                    maximum: 4294967295
+                    minimum: 0
+                    type: integer
+                required:
+                - blockHash
+                - height
+                type: object
+              genesisDigest:
+                description: GenesisDigest identifies the source network's public
+                  chain configuration.
+                maxLength: 71
+                pattern: ^sha256:[0-9a-f]{64}$
+                type: string
+              image:
+                description: |-
+                  Image carries the actor archives under /snapshot and provides a POSIX shell with tar (gzip),
+                  sha256sum, cut, cat, find and sync, as BusyBox does. Every actor start runs it, so it must
+                  stay available while a restored network exists. Restore verifies every archive checksum, so a
+                  tag is accepted; a digest reference additionally pins delivery.
+                maxLength: 512
+                minLength: 1
+                type: string
+              participants:
+                description: Participants projects the source initial cohort onto
+                  the values a restore depends on.
+                items:
+                  description: |-
+                    SnapshotParticipant is the restore-relevant projection of one initial cohort member: the public
+                    identities by role, the links between participants, mining role, stake and registry threshold
+                    the captured chain depends on. Per-network identities (UIDs) and whole-policy digests are
+                    deliberately absent: resources, overrides and placement may differ in a restoring network.
+                    Worker accounts (transaction production, faucets) are not projected: they may change, and any
+                    they fund at genesis is already covered by the genesis digest.
+                  properties:
+                    accounts:
+                      description: Accounts lists the public identities the participant
+                        uses, by the role that selects them.
+                      items:
+                        description: SnapshotAccount is one public identity a participant
+                          uses, with the role that selects it.
+                        properties:
+                          address:
+                            description: Address is a testnet Stacks address.
+                            maxLength: 64
+                            pattern: ^ST[0-9A-HJKMNP-TV-Z]{26,39}$
+                            type: string
+                          publicKey:
+                            description: PublicKey is a compressed secp256k1 public
+                              key.
+                            pattern: ^(02|03)[0-9a-fA-F]{64}$
+                            type: string
+                          role:
+                            description: Role is the participant field that selects
+                              the account.
+                            enum:
+                            - Identity
+                            - Signer
+                            - Holder
+                            - Administrator
+                            - Deployer
+                            - RegistrySigner
+                            - AggregateKey
+                            type: string
+                        required:
+                        - address
+                        - publicKey
+                        - role
+                        type: object
+                      maxItems: 1000
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - role
+                      - address
+                      x-kubernetes-list-type: map
+                    amountMicroSTX:
+                      description: AmountMicroSTX preserves a stacker's stake.
+                      maxLength: 20
+                      pattern: ^(0|[1-9][0-9]{0,19})$
+                      type: string
+                      x-kubernetes-validations:
+                      - message: amount must fit uint64
+                        rule: uint(self) <= 18446744073709551615u
+                    archive:
+                      description: Archive locates an actor's captured data.
+                      properties:
+                        image:
+                          description: Image is the actor image that last wrote the
+                            data.
+                          maxLength: 512
+                          minLength: 1
+                          type: string
+                        path:
+                          description: |-
+                            Path names a gzip tar archive directly under /snapshot, with members relative to the actor's
+                            data root.
+                          maxLength: 128
+                          pattern: ^[a-z0-9][-a-z0-9.]*\.tar\.gz$
+                          type: string
+                        sha256:
+                          description: SHA256 is the archive's hex checksum, verified
+                            before extraction.
+                          pattern: ^[0-9a-f]{64}$
+                          type: string
+                      required:
+                      - image
+                      - path
+                      - sha256
+                      type: object
+                    bitcoinNode:
+                      description: BitcoinNode preserves a Stacks node's Bitcoin participant.
+                      maxLength: 63
+                      type: string
+                    kind:
+                      description: Kind is the participant domain.
+                      enum:
+                      - BitcoinNode
+                      - StacksNode
+                      - StacksSigner
+                      - StacksStacker
+                      - StacksFaucet
+                      - StacksContractSet
+                      - StacksTransactionProduction
+                      - BitcoinBlockProduction
+                      type: string
+                    lockCycles:
+                      description: LockCycles preserves a stacker's lock coverage.
+                      format: int32
+                      maximum: 12
+                      minimum: 2
+                      type: integer
+                    miningEnabled:
+                      description: MiningEnabled preserves a Stacks node's mining
+                        role.
+                      type: boolean
+                    name:
+                      description: Name is the source network-relative instance name.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    node:
+                      description: Node preserves a signer's Stacks node participant.
+                      maxLength: 63
+                      type: string
+                    registrySigners:
+                      description: |-
+                        RegistrySigners preserves a contract set's registry signer addresses in registry order: the
+                        on-chain signer set and the principal derived from it depend on the order, which accounts
+                        do not carry.
+                      items:
+                        maxLength: 64
+                        pattern: ^ST[0-9A-HJKMNP-TV-Z]{26,39}$
+                        type: string
+                      maxItems: 100
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    registryThreshold:
+                      description: RegistryThreshold preserves a contract set's initial
+                        bridge registry threshold.
+                      format: int32
+                      maximum: 100
+                      minimum: 1
+                      type: integer
+                    signer:
+                      description: Signer preserves a stacker's signer participant.
+                      maxLength: 63
+                      type: string
+                  required:
+                  - kind
+                  - name
+                  type: object
+                  x-kubernetes-validations:
+                  - message: exactly the actor kinds carry an archive
+                    rule: has(self.archive) == (self.kind in ['BitcoinNode','StacksNode','StacksSigner'])
+                  - message: miningEnabled is required on, and only on, a StacksNode
+                    rule: has(self.miningEnabled) == (self.kind == 'StacksNode')
+                  - message: bitcoinNode is required on, and only on, a StacksNode
+                    rule: has(self.bitcoinNode) == (self.kind == 'StacksNode')
+                  - message: node is required on, and only on, a StacksSigner
+                    rule: has(self.node) == (self.kind == 'StacksSigner')
+                  - message: signer is required on, and only on, a StacksStacker
+                    rule: has(self.signer) == (self.kind == 'StacksStacker')
+                  - message: stake is required on, and only on, a StacksStacker
+                    rule: 'self.kind == ''StacksStacker'' ? (has(self.amountMicroSTX)
+                      && has(self.lockCycles)) : (!has(self.amountMicroSTX) && !has(self.lockCycles))'
+                  - message: registryThreshold applies to StacksContractSet only
+                    rule: '!has(self.registryThreshold) || self.kind == ''StacksContractSet'''
+                  - message: registrySigners applies to StacksContractSet only
+                    rule: '!has(self.registrySigners) || self.kind == ''StacksContractSet'''
+                maxItems: 1000
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              stacks:
+                description: Stacks records the captured Stacks tip.
+                properties:
+                  blockHash:
+                    description: BlockHash is the captured tip block hash.
+                    pattern: ^[0-9a-f]{64}$
+                    type: string
+                  height:
+                    description: Height is the captured Stacks block height.
+                    format: int64
+                    minimum: 0
+                    type: integer
+                  indexBlockID:
+                    description: IndexBlockID is the captured tip's index block ID,
+                      SHA512/256(block hash || consensus hash).
+                    pattern: ^[0-9a-f]{64}$
+                    type: string
+                  rewardCycle:
+                    description: RewardCycle is the PoX reward cycle at capture.
+                    format: int64
+                    minimum: 0
+                    type: integer
+                required:
+                - blockHash
+                - height
+                - indexBlockID
+                - rewardCycle
+                type: object
+            required:
+            - bitcoin
+            - genesisDigest
+            - image
+            - participants
+            - stacks
+            type: object
+            x-kubernetes-validations:
+            - message: a snapshot carries at least one actor archive
+              rule: self.participants.exists(p, has(p.archive))
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: chainstate snapshots are immutable
+          rule: self.spec == oldSelf.spec
+    served: true
+    storage: true

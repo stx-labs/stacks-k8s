@@ -16,6 +16,8 @@ func TestKindWireAndSchemeIdentity(t *testing.T) {
 		kind, wire string
 		object     runtime.Object
 	}{
+		{KindStacksChainstateSnapshot, "StacksChainstateSnapshot", &StacksChainstateSnapshot{}},
+		{KindStacksChainstateSnapshotList, "StacksChainstateSnapshotList", &StacksChainstateSnapshotList{}},
 		{KindStacksEpochSchedule, "StacksEpochSchedule", &StacksEpochSchedule{}},
 		{KindStacksEpochScheduleList, "StacksEpochScheduleList", &StacksEpochScheduleList{}},
 		{KindStacksGenesis, "StacksGenesis", &StacksGenesis{}},

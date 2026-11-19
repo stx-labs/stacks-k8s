@@ -197,7 +197,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 			return ctrl.Result{}, err
 		}
 	}
-	if err := r.authorized(ctx, &root, &p); err != nil {
+	if _, err := r.authorized(ctx, &root, &p); err != nil {
 		return finish(metav1.ConditionFalse, api.ReasonAdmissionUnavailable, err.Error())
 	}
 	if root.Spec.Operation == api.NetworkOperationPaused && len(state.WorkloadRefs) == 0 {
@@ -315,7 +315,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		current.Status.Admission.PolicyDigest != p.Status.Admission.PolicyDigest {
 		return ctrl.Result{RequeueAfter: time.Millisecond}, nil
 	}
-	if err := r.authorized(ctx, &currentRoot, &current); err != nil {
+	genesis, err := r.authorized(ctx, &currentRoot, &current)
+	if err != nil {
 		return finish(metav1.ConditionFalse, api.ReasonAdmissionUnavailable, err.Error())
 	}
 	p = current
@@ -337,7 +338,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 			return finish(metav1.ConditionFalse, api.ReasonOwnershipConflict, err.Error())
 		}
 	}
-	workload, err := actorWorkload(&p, &state)
+	workload, err := actorWorkload(&p, &state, chainstateRestoreFor(genesis, &p))
 	if err != nil {
 		return finish(metav1.ConditionFalse, api.ReasonInvalidConfiguration, err.Error())
 	}
@@ -405,19 +406,26 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		}
 	}
 	meta.SetStatusCondition(&conditions, placement)
-	for _, status := range pod.Status.InitContainerStatuses {
-		if status.Name == "config-check" &&
-			((status.State.Terminated != nil &&
-				status.State.Terminated.ExitCode != 0) ||
-				(status.State.Waiting != nil &&
-					status.LastTerminationState.Terminated != nil &&
-					status.LastTerminationState.Terminated.ExitCode != 0)) {
-			return finish(
-				metav1.ConditionFalse,
-				api.ReasonInvalidConfiguration,
-				"Selected actor image rejected its native configuration; private validation output is suppressed",
-			)
-		}
+	if initContainerFailed(pod, restoreContainer) {
+		return finish(
+			metav1.ConditionFalse,
+			reasonRestoreFailed,
+			"Chainstate restore failed; check the snapshot image and its archive checksum",
+		)
+	}
+	if restoreImageUnavailable(pod) {
+		return finish(
+			metav1.ConditionFalse,
+			reasonRestoreFailed,
+			"Chainstate snapshot image cannot be pulled on this node; load it on every node or use a registry",
+		)
+	}
+	if initContainerFailed(pod, "config-check") {
+		return finish(
+			metav1.ConditionFalse,
+			api.ReasonInvalidConfiguration,
+			"Selected actor image rejected its native configuration; private validation output is suppressed",
+		)
 	}
 	if podReady(pod) && pod.Annotations[api.AnnotationPolicyDigest] == state.PolicyDigest &&
 		(p.Spec.Kind == api.ParticipantBitcoinNode ||
@@ -454,8 +462,13 @@ func selected(root *api.StacksNetwork, p *api.StacksNetworkParticipant) bool {
 	return false
 }
 
-// authorized verifies current lifecycle, admission and published genesis identities.
-func (r *Reconciler) authorized(ctx context.Context, root *api.StacksNetwork, p *api.StacksNetworkParticipant) error {
+// authorized verifies current lifecycle, admission and published genesis identities, and returns
+// the verified genesis.
+func (r *Reconciler) authorized(
+	ctx context.Context,
+	root *api.StacksNetwork,
+	p *api.StacksNetworkParticipant,
+) (*api.StacksGenesis, error) {
 	if root.UID != p.Spec.NetworkUID || root.DeletionTimestamp != nil ||
 		root.Spec.Operation == api.NetworkOperationStopped ||
 		(root.Status.Phase == api.NetworkPhaseFailed ||
@@ -464,16 +477,16 @@ func (r *Reconciler) authorized(ctx context.Context, root *api.StacksNetwork, p 
 				api.ConditionFailed,
 			)) ||
 		p.DeletionTimestamp != nil {
-		return fmt.Errorf("network lifecycle withdraws actor activation")
+		return nil, fmt.Errorf("network lifecycle withdraws actor activation")
 	}
 	if err := foundation.ValidateParticipantAdmission(ctx, r.Reader, root, p); err != nil {
-		return err
+		return nil, err
 	}
 	if _, err := actorFields(p); err != nil {
-		return err
+		return nil, err
 	}
 	if root.Status.GenesisRef == nil {
-		return fmt.Errorf("published genesis is required")
+		return nil, fmt.Errorf("published genesis is required")
 	}
 	var genesis api.StacksGenesis
 	if err := r.Reader.Get(
@@ -481,16 +494,18 @@ func (r *Reconciler) authorized(ctx context.Context, root *api.StacksNetwork, p 
 		client.ObjectKey{Namespace: root.Namespace, Name: root.Status.GenesisRef.Name},
 		&genesis,
 	); err != nil {
-		return fmt.Errorf("genesis unavailable")
+		return nil, fmt.Errorf("genesis unavailable")
 	}
+	// The full-spec fingerprint also covers the restore inputs the workload reads from the genesis.
 	owner := metav1.GetControllerOf(&genesis)
 	if genesis.UID != root.Status.GenesisRef.UID || genesis.DeletionTimestamp != nil || owner == nil ||
 		owner.UID != root.UID ||
 		genesis.Spec.Source.NetworkUID != root.UID ||
+		digest(genesis.Spec) != root.Status.GenesisRef.Fingerprint ||
 		digest(genesis.Spec.Chain) != root.Status.GenesisDigest {
-		return fmt.Errorf("published genesis identity or digest changed")
+		return nil, fmt.Errorf("published genesis identity or digest changed")
 	}
-	return nil
+	return &genesis, nil
 }
 
 // ownConditions selects only the domain condition entries.

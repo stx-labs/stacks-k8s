@@ -135,8 +135,11 @@ func (r PublicInputs) PoX4(ctx context.Context, s stacksworker.Snapshot) (PoX4In
 	if initial != nil && (!captured || !signerCaptured) {
 		return input, errors.New("captured PoX cohort identity unavailable")
 	}
+	// A restored chain already holds the frozen cohort's bootstrap enrollment, so its stackers
+	// keep or renew from the current cycle like a later cohort instead of replaying bootstrap.
+	bootstrap := initial != nil && !foundation.Restored(genesis)
 	input = PoX4Inputs{
-		InitialCohort:            initial != nil,
+		InitialCohort:            bootstrap,
 		Node:                     node,
 		Holder:                   r.Sender,
 		SignerPublicKey:          consensus.Status.Identity.PublicKey,
@@ -147,7 +150,7 @@ func (r PublicInputs) PoX4(ctx context.Context, s stacksworker.Snapshot) (PoX4In
 	for _, gate := range genesis.Spec.Bootstrap.Gates {
 		if gate.Name == api.GateEnrollPoX4 && gate.TargetCycle != nil && *gate.TargetCycle >= 0 &&
 			gate.BitcoinCeiling > 0 {
-			if initial != nil {
+			if bootstrap {
 				input.TargetCycle = uint64(*gate.TargetCycle)
 			}
 			input.EnrollmentCeiling = uint64(gate.BitcoinCeiling)

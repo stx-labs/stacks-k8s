@@ -92,7 +92,7 @@ func TestFoundationChart(t *testing.T) {
 	add("network.stacks.org", "stacksnetworks", "get,list,patch,watch")
 	add("network.stacks.org", "stacksnetworkparticipants", "create,delete,get,list,patch,watch")
 	add("network.stacks.org", "stacksgeneses", "create,get,list,patch,watch")
-	add("network.stacks.org", "stacksepochschedules", "get,list,watch")
+	add("network.stacks.org", "stacksepochschedules,stackschainstatesnapshots", "get,list,watch")
 	add(
 		"network.stacks.org",
 		"stacksnetworks/status,stacksnetworkparticipants/status,stacksepochschedules/status",

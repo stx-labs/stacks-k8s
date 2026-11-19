@@ -155,6 +155,21 @@ type GenesisInput struct {
 	Allocations []GenesisAllocation `json:"allocations,omitempty"`
 	// PoX specifies regtest cycle lengths.
 	PoX *PoX `json:"pox,omitempty"`
+	// Restore starts the network from a captured chainstate instead of initializing it from genesis.
+	Restore *GenesisRestore `json:"restore,omitempty"`
+}
+
+// GenesisRestore selects a captured chainstate for a new network.
+type GenesisRestore struct {
+	// SnapshotRef selects a StacksChainstateSnapshot in the network namespace.
+	SnapshotRef common.NameRef `json:"snapshotRef"`
+	// StacksImagePolicy decides whether Stacks nodes and signers may run images other than the ones
+	// that wrote the snapshot, for example to compare builds on the same chain. Exact requires the
+	// same images; AllowDifferent accepts others and records each change in the frozen genesis.
+	// Bitcoin node images must always match.
+	// +kubebuilder:default=Exact
+	// +kubebuilder:validation:Enum=Exact;AllowDifferent
+	StacksImagePolicy StacksImagePolicy `json:"stacksImagePolicy,omitempty"`
 }
 
 // PoX defines reward and preparation cycle lengths.

@@ -51,6 +51,10 @@ func currentGate(
 		foundation.Digest(genesis.Spec) != ref.Fingerprint {
 		return authority, errors.New("bootstrap genesis identity differs")
 	}
+	// A restored chain is past every ceiling: its gates complete by restore, never by generation.
+	if foundation.Restored(&genesis) {
+		return authority, errors.New("restored genesis has no bootstrap gate authority")
+	}
 	gates := genesis.Spec.Bootstrap.Gates
 	if state == nil {
 		if len(gates) == 0 || gates[0].Name != api.GatePrepareBitcoin ||

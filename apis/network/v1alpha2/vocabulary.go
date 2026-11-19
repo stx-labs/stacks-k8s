@@ -12,6 +12,37 @@ const (
 	NetworkOperationStopped NetworkOperation = "Stopped"
 )
 
+// StacksImagePolicy names supported GenesisRestore.StacksImagePolicy values. Unknown input still requires validation.
+type StacksImagePolicy string
+
+const (
+	// StacksImagePolicyExact requires the Stacks node and signer images that wrote the restored data.
+	StacksImagePolicyExact StacksImagePolicy = "Exact"
+	// StacksImagePolicyAllowDifferent lets Stacks nodes and signers run other images on the restored data.
+	StacksImagePolicyAllowDifferent StacksImagePolicy = "AllowDifferent"
+)
+
+// SnapshotAccountRole names supported SnapshotAccount.Role values: the participant field that
+// selects the account. Unknown input still requires validation.
+type SnapshotAccountRole string
+
+const (
+	// SnapshotAccountRoleIdentity is a Stacks node's identityAccountRef.
+	SnapshotAccountRoleIdentity SnapshotAccountRole = "Identity"
+	// SnapshotAccountRoleSigner is a signer's accountRef.
+	SnapshotAccountRoleSigner SnapshotAccountRole = "Signer"
+	// SnapshotAccountRoleHolder is a stacker's holderAccountRef.
+	SnapshotAccountRoleHolder SnapshotAccountRole = "Holder"
+	// SnapshotAccountRoleAdministrator is a stacker's administratorAccountRef.
+	SnapshotAccountRoleAdministrator SnapshotAccountRole = "Administrator"
+	// SnapshotAccountRoleDeployer is a contract set's deployerAccountRef.
+	SnapshotAccountRoleDeployer SnapshotAccountRole = "Deployer"
+	// SnapshotAccountRoleRegistrySigner is one of a contract set's registry signerAccountRefs.
+	SnapshotAccountRoleRegistrySigner SnapshotAccountRole = "RegistrySigner"
+	// SnapshotAccountRoleAggregateKey is a contract set's registry aggregateKeyAccountRef.
+	SnapshotAccountRoleAggregateKey SnapshotAccountRole = "AggregateKey"
+)
+
 // NetworkPhase names supported StacksNetworkStatus.Phase values. Unknown input still requires validation.
 type NetworkPhase string
 

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	bitcoin "github.com/cylewitruk-stacks/stacks-k8s/apis/network/bitcoin/v1alpha2"
+	common "github.com/cylewitruk-stacks/stacks-k8s/apis/network/common/v1alpha2"
 	api "github.com/cylewitruk-stacks/stacks-k8s/apis/network/v1alpha2"
 	"github.com/cylewitruk-stacks/stacks-k8s/operators/network/internal/foundation"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -91,6 +92,10 @@ func (r *Reconciler) projectGates(
 	}
 	state := root.Status.Initialization
 	if state.Completed {
+		return false, nil
+	}
+	if restoredFrom, restored := foundation.RestoredFrom(genesis); restored {
+		completeByRestore(state, genesis.Spec.Bootstrap.Gates, record, restoredFrom)
 		return false, nil
 	}
 	gate := genesis.Spec.Bootstrap.Gates[state.GateIndex]
@@ -190,6 +195,30 @@ func (r *Reconciler) projectGates(
 		state.AuthorizedCeiling = genesis.Spec.Bootstrap.Gates[state.GateIndex].BitcoinCeiling
 	}
 	return false, nil
+}
+
+// completeByRestore records every frozen gate as completed once restored Bitcoin preparation is.
+// A restored chain is already past every ceiling, so its gates are not observed one by one: neither
+// the ceiling latch nor the observation deadline applies. The snapshot's own source network
+// observed them; the restored preparation proved the chain is that snapshot.
+func completeByRestore(
+	state *api.InitializationStatus,
+	gates []api.Gate,
+	record *bitcoin.BitcoinInitialization,
+	restoredFrom common.Binding,
+) {
+	if record.Status.PreparedAt == nil {
+		return
+	}
+	for int(state.GateIndex) < len(state.Gates) {
+		completed := *record.Status.PreparedAt
+		state.Gates[state.GateIndex].CompletedAt = &completed
+		state.GateIndex++
+	}
+	// Completed state retains the final ceiling, exactly as gate-by-gate completion leaves it.
+	state.AuthorizedCeiling = gates[len(gates)-1].BitcoinCeiling
+	state.Completed = true
+	state.RestoredFrom = &restoredFrom
 }
 
 // initializationHeight uses the exact initial target's successful, fresh read observation.

@@ -53,6 +53,11 @@ func EpochSchedule(object *api.StacksEpochSchedule) common.Binding {
 	return capture(api.KindStacksEpochSchedule, object)
 }
 
+// ChainstateSnapshot captures a StacksChainstateSnapshot reference from its concrete type.
+func ChainstateSnapshot(object *api.StacksChainstateSnapshot) common.Binding {
+	return capture(api.KindStacksChainstateSnapshot, object)
+}
+
 // Account captures a StacksAccount reference from its concrete type.
 func Account(object *stacks.StacksAccount) common.Binding {
 	return capture(stacks.KindStacksAccount, object)

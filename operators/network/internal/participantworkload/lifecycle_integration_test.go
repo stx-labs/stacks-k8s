@@ -109,7 +109,7 @@ func TestActorAPILifecycleAndStatusIsolation(t *testing.T) {
 				if kind == "BitcoinNode" {
 					return StatefulSet(p, "config", "actor-credentials", 1)
 				}
-				return actorWorkload(p, nativeRuntimeFixture())
+				return actorWorkload(p, nativeRuntimeFixture(), nil)
 			}
 			workload, err := render()
 			must(err)
@@ -333,7 +333,7 @@ func verifyShutdownReconcile(t *testing.T, ctx context.Context, c client.Client)
 				if kind == "BitcoinNode" {
 					workload, err = StatefulSet(p, "config", "credentials", 0)
 				} else {
-					workload, err = actorWorkload(p, nativeRuntimeFixture())
+					workload, err = actorWorkload(p, nativeRuntimeFixture(), nil)
 					workload.Spec.Replicas = ptr.To[int32](0)
 				}
 				must(err)
