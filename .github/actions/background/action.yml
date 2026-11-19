@@ -1,0 +1,30 @@
+name: Background command
+description: >-
+  Starts a shell command in the background, so later steps of the same job run while it
+  works, then waits for it, prints its output and fails the step if it failed.
+inputs:
+  phase:
+    description: start launches the command and returns; wait blocks until it exits
+    required: true
+  name:
+    description: Identifies the command between its start and wait phases
+    required: true
+  run:
+    description: start only; bash command line, run from the workspace
+    required: false
+    default: ''
+  timeout:
+    description: wait only; seconds before the step fails
+    required: false
+    default: '1800'
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        PHASE: ${{ inputs.phase }}
+        NAME: ${{ inputs.name }}
+        RUN: ${{ inputs.run }}
+        TIMEOUT: ${{ inputs.timeout }}
+        STATE: ${{ runner.temp }}/background
+      run: '"$GITHUB_ACTION_PATH/background.sh"'

@@ -1,11 +1,14 @@
 name: k3s multi-runner experiment
 
 # Experiment: one k3s cluster spanning several GitHub-hosted runners, joined over
-# Tailscale. Measures join time, Tailscale paths, pod RTT and throughput across runners,
-# then runs a public StacksNetwork example (minimal by default) across them.
+# Tailscale. The runner with the lowest mean round-trip time to the others becomes the k3s
+# server; the rest join as agents. Measures join time, Tailscale paths, pod RTT and
+# throughput across runners, then runs a public StacksNetwork example (minimal by
+# default) across them.
 # Requires repository variables TS_OAUTH_CLIENT_ID and TS_AUDIENCE from a Tailscale
 # OpenID Connect trust credential (auth_keys write on tag:ci), and a random
-# K3S_TOKEN_SALT secret. The tailnet policy should let tag:ci reach only tag:ci.
+# K3S_TOKEN_SALT secret. The tailnet policy should let tag:ci reach only tag:ci, including
+# TCP 8099, where runners share latency measurements for the server election.
 # Live access (dashboard on port 8080, Tailscale SSH as runner) additionally needs a
 # policy grant and SSH rule from your members to tag:ci; the job summary has the links.
 on:
@@ -16,6 +19,7 @@ on:
       - .github/workflows/k3s-runners-experiment.yml
       - .github/k3s-runners/**
       - .github/runner-lib/**
+      - .github/actions/**
   workflow_dispatch:
     inputs:
       example:
@@ -62,6 +66,7 @@ concurrency:
 
 env:
   AGENTS: 4
+  NODES: 5 # AGENTS + 1, as listed in the node matrix
   NODE_PREFIX: k3s-${{ github.run_id }}-${{ github.run_attempt }}
   SERVER_HOST: k3s-${{ github.run_id }}-${{ github.run_attempt }}-server
   TOKEN_SEED: ${{ github.run_id }}-${{ github.run_attempt }}-${{ secrets.K3S_TOKEN_SALT }}
@@ -72,8 +77,12 @@ env:
   ROUNDS_UNTIL: ${{ (inputs.mode == 'placement' || inputs.mode == 'images') && inputs.rounds_until || 'resolved' }}
 
 jobs:
-  server:
-    name: Server
+  node:
+    name: Node ${{ matrix.index }}
+    strategy:
+      fail-fast: false
+      matrix:
+        index: [1, 2, 3, 4, 5] # NODES
     runs-on: ubuntu-24.04
     # Expressions have no arithmetic: 105 minutes (setup, up to 20 minutes of
     # resolution and 60 of initialization, teardown) plus the selected hold; initialized
@@ -86,29 +95,66 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0 # BASE_REVERT builds need the reverted commit
-      - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
-      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+      # Images and k3s build in the background while the runners find each other.
+      - uses: ./.github/actions/background
+        with:
+          phase: start
+          name: images
+          run: set -o pipefail; mkdir -p out; .github/k3s-runners/load-operator-image.sh | tee out/images.txt
+      - uses: ./.github/actions/background
+        with:
+          phase: start
+          name: k3s
+          run: .github/k3s-runners/install-k3s.sh
       - uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
         with:
           oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
           audience: ${{ vars.TS_AUDIENCE }}
           tags: tag:ci
-          hostname: ${{ env.SERVER_HOST }}
+          hostname: ${{ env.NODE_PREFIX }}-node-${{ matrix.index }}
           args: --ssh
-      - run: .github/k3s-runners/install-k3s.sh
-      - name: Build operator images
-        run: |
-          set -o pipefail
-          mkdir -p out
-          .github/k3s-runners/load-operator-image.sh | tee out/images.txt
-      - run: .github/k3s-runners/k3s-node.sh server
+      - uses: ./.github/actions/tailnet-election
+        with:
+          phase: start
+          index: ${{ matrix.index }}
+          size: ${{ env.NODES }}
+          prefix: ${{ env.NODE_PREFIX }}-node-
+      - uses: ./.github/actions/background
+        with:
+          phase: wait
+          name: images
+      - uses: ./.github/actions/background
+        with:
+          phase: wait
+          name: k3s
+      - id: election
+        uses: ./.github/actions/tailnet-election
+        with:
+          phase: result
+          index: ${{ matrix.index }}
+          size: ${{ env.NODES }}
+          prefix: ${{ env.NODE_PREFIX }}-node-
+      - name: Assume the elected role
+        run: >-
+          .github/k3s-runners/assume-role.sh "${{ steps.election.outputs.elected }}"
+          "${{ steps.election.outputs.rank }}" "${{ steps.election.outputs.leader-ip }}"
+      - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
+        if: env.ROLE == 'server'
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        if: env.ROLE == 'server'
+      - run: .github/k3s-runners/k3s-node.sh "$ROLE"
       - name: Measure
+        if: env.ROLE == 'server'
+        env:
+          ELECTION: ${{ steps.election.outputs.summary }}
         run: |
           set -o pipefail
           mkdir -p out
           .github/k3s-runners/measure.sh "$AGENTS" | tee out/measurements.md
+          tee -a out/measurements.md < "$ELECTION" >/dev/null
           cat out/measurements.md >> "$GITHUB_STEP_SUMMARY"
       - name: Install network operator
+        if: env.ROLE == 'server'
         run: |
           helm --kubeconfig "$KCFG" --kube-context "$CTX" upgrade --install network charts/stacks-network-operator \
             --namespace stacks-network-system --create-namespace --wait --timeout 5m \
@@ -118,19 +164,20 @@ jobs:
             STACKS_API_ACCOUNTING_INTERVAL=5s
           kubectl --kubeconfig "$KCFG" -n stacks-network-system rollout status deployment network --timeout 5m
       - name: Place operator on the server
-        if: (inputs.mode == '' || inputs.mode == 'network') && inputs.operator_node != 'agent'
+        if: env.ROLE == 'server' && ((inputs.mode == '' || inputs.mode == 'network') && inputs.operator_node != 'agent')
         run: .github/k3s-runners/place-operator.sh "$SERVER_HOST"
       - name: Dashboard
+        if: env.ROLE == 'server'
         run: .github/k3s-runners/dashboard.sh "$KCFG" "$CTX"
       - name: Network (${{ env.EXAMPLE }})
-        if: inputs.mode == '' || inputs.mode == 'network'
+        if: env.ROLE == 'server' && (inputs.mode == '' || inputs.mode == 'network')
         run: |
           set -o pipefail
           . .github/k3s-runners/example-env.sh
           HOLD_SECONDS=$(( HOLD_MINUTES * 60 )) .github/runner-lib/network.sh \
             "docs/design/public-api/examples/$EXAMPLE.yaml" "$KCFG" "$CTX" out/network | tee out/network.log
       - name: Operator ${{ inputs.mode }} rounds (${{ env.EXAMPLE }})
-        if: inputs.mode == 'placement' || inputs.mode == 'images'
+        if: env.ROLE == 'server' && (inputs.mode == 'placement' || inputs.mode == 'images')
         env:
           MODE: ${{ inputs.mode }}
           OPERATOR_NODE: ${{ inputs.operator_node }}
@@ -153,7 +200,7 @@ jobs:
             "${rounds[@]}" | tee out/rounds.log
           { cat out/rounds/summary.md; echo; echo '```text'; cat out/images.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Diagnostics
-        if: always()
+        if: always() && env.ROLE == 'server'
         run: |
           mkdir -p out
           kubectl --kubeconfig "$KCFG" get nodes,pods -A -o wide > out/cluster.txt 2>&1 || true
@@ -163,10 +210,19 @@ jobs:
           tailscale status > out/tailscale-status.txt 2>&1 || true
           sudo journalctl -u k3s --no-pager | tail -300 > out/k3s-server.log 2>&1 || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
+        if: always() && env.ROLE == 'server'
         with:
           name: server
           path: out
+      - name: Hold until the server finishes
+        if: env.ROLE == 'agent'
+        run: |
+          limit=$(( 6000 + HOLD_MINUTES * 60 ))
+          [ "$ROUNDS_UNTIL" != initialized ] || limit=15000
+          .github/k3s-runners/hold-agent.sh "$limit"
+      - name: Agent log
+        if: always() && env.ROLE == 'agent'
+        run: sudo journalctl -u k3s --no-pager | tail -100 || true
 
   # Publishes live-access details as soon as the dashboard is up; a job summary appears
   # only when its job ends.
@@ -186,34 +242,3 @@ jobs:
         run: |
           set -o pipefail
           .github/k3s-runners/access.sh | tee -a "$GITHUB_STEP_SUMMARY"
-
-  agent:
-    name: Agent ${{ matrix.index }}
-    strategy:
-      fail-fast: false
-      matrix:
-        index: [1, 2, 3, 4]
-    runs-on: ubuntu-24.04
-    timeout-minutes: ${{ (inputs.mode == 'placement' || inputs.mode == 'images') && inputs.rounds_until == 'initialized' && 255 || inputs.hold == '90' && 195 || inputs.hold == '60' && 165 || inputs.hold == '30' && 135 || 105 }}
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          fetch-depth: 0 # BASE_REVERT builds need the reverted commit
-      - uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
-        with:
-          oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
-          audience: ${{ vars.TS_AUDIENCE }}
-          tags: tag:ci
-          hostname: k3s-${{ github.run_id }}-${{ github.run_attempt }}-agent-${{ matrix.index }}
-          args: --ssh
-      - run: .github/k3s-runners/install-k3s.sh
-      - run: .github/k3s-runners/load-operator-image.sh
-      - run: .github/k3s-runners/k3s-node.sh agent
-      - name: Hold until the server finishes
-        run: |
-          limit=$(( 6000 + HOLD_MINUTES * 60 ))
-          [ "$ROUNDS_UNTIL" != initialized ] || limit=15000
-          .github/k3s-runners/hold-agent.sh "$limit"
-      - name: Agent log
-        if: always()
-        run: sudo journalctl -u k3s --no-pager | tail -100 || true

@@ -2,13 +2,14 @@
 # Usage: k3s-node.sh server|agent
 # Starts k3s over the tailnet: node IPs are Tailscale addresses and flannel's VXLAN
 # runs on tailscale0. Env: TOKEN_SEED (per-run and secret, shared by all jobs of a
-# run); agents also need SERVER_HOST (tailnet hostname).
+# run), optional NODE_NAME (default: this tailnet hostname); agents also need SERVER_IP
+# (tailnet address) or SERVER_HOST (tailnet hostname, resolved when SERVER_IP is unset).
 set -euo pipefail
 role=$1
 token="$(printf '%s' "$TOKEN_SEED" | sha256sum | cut -d' ' -f1)"
 ip="$(tailscale ip -4)"
 # Runner VM hostnames can repeat across jobs; the per-run tailnet hostname is unique.
-name="$(tailscale status --json | jq -r .Self.HostName)"
+name="${NODE_NAME:-$(tailscale status --json | jq -r .Self.HostName)}"
 args=(--node-name "$name" --node-ip "$ip" --flannel-iface tailscale0)
 # Record the runner's Azure region, when the instance metadata service answers.
 region="$(curl -sf --max-time 2 -H Metadata:true \
@@ -25,7 +26,7 @@ case "$role" in
     ;;
   agent)
     # Agents may start before the server; wait for its tailnet address and supervisor.
-    until server_ip="$(tailscale ip -4 "$SERVER_HOST" 2>/dev/null)" &&
+    until server_ip="${SERVER_IP:-$(tailscale ip -4 "$SERVER_HOST" 2>/dev/null)}" &&
       [ "$(curl -sk --max-time 5 "https://$server_ip:6443/ping")" = pong ]; do
       (( $(date +%s) - started < 900 )) || { echo "$(stamp) server $SERVER_HOST unreachable" >&2; exit 1; }
       sleep 5

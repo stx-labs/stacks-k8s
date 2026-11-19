@@ -1,0 +1,70 @@
+name: Tailnet latency election
+description: >-
+  Elects the node with the lowest mean round-trip time to its peers among SIZE tailnet
+  nodes named PREFIX1..PREFIXSIZE. start measures in the background: once every peer is on
+  the tailnet, each node pings each peer once a second for the window, the median per peer
+  forms its row, and the coordinator elects from all rows (mean of both directions per
+  pair; ties go to the lower maximum, then the lower index) and publishes the result. Rows
+  and the result are shared over HTTP on each node's tailnet address. result waits for the
+  election and sets the outputs.
+inputs:
+  phase:
+    description: start begins measurement and returns; result waits for the election
+    required: true
+  index:
+    description: This node's index, 1 to size
+    required: true
+  size:
+    description: Number of nodes taking part
+    required: true
+  prefix:
+    description: Tailnet hostname prefix; node i is named prefix followed by i
+    required: true
+  window:
+    description: Seconds of pings once every peer is present
+    required: false
+    default: '30'
+  timeout:
+    description: Seconds from start for peers, rows and the result before failing
+    required: false
+    default: '900'
+  port:
+    description: TCP port serving rows and the result on each tailnet address
+    required: false
+    default: '8099'
+  coordinator:
+    description: Index of the node that elects and publishes the result
+    required: false
+    default: '1'
+outputs:
+  leader-index:
+    description: Elected node's index
+    value: ${{ steps.result.outputs.leader-index }}
+  leader-ip:
+    description: Elected node's tailnet IPv4 address
+    value: ${{ steps.result.outputs.leader-ip }}
+  elected:
+    description: true on the elected node
+    value: ${{ steps.result.outputs.elected }}
+  rank:
+    description: This node's position among the others by index, 1 to size-1; 0 when elected
+    value: ${{ steps.result.outputs.rank }}
+  summary:
+    description: Path to a Markdown summary of the round-trip matrix and the election
+    value: ${{ steps.result.outputs.summary }}
+runs:
+  using: composite
+  steps:
+    - id: result
+      shell: bash
+      env:
+        PHASE: ${{ inputs.phase }}
+        INDEX: ${{ inputs.index }}
+        SIZE: ${{ inputs.size }}
+        PREFIX: ${{ inputs.prefix }}
+        WINDOW: ${{ inputs.window }}
+        TIMEOUT: ${{ inputs.timeout }}
+        PORT: ${{ inputs.port }}
+        COORDINATOR: ${{ inputs.coordinator }}
+        STATE: ${{ runner.temp }}/tailnet-election
+      run: '"$GITHUB_ACTION_PATH/election.sh" "$PHASE"'
