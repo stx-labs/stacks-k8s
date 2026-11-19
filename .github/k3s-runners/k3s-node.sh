@@ -15,6 +15,8 @@ args=(--node-name "$name" --node-ip "$ip" --flannel-iface tailscale0)
 region="$(curl -sf --max-time 2 -H Metadata:true \
   'http://169.254.169.254/metadata/instance/compute/location?api-version=2021-02-01&format=text' || true)"
 args+=(--node-label "ci.stacks.org/region=${region:-unknown}")
+# kubectl logs reads only the current file: keep a whole experiment's logs in it.
+args+=(--kubelet-arg=container-log-max-size=1Gi --kubelet-arg=container-log-max-files=2)
 stamp() { date -u +%H:%M:%S; }
 started=$(date +%s)
 

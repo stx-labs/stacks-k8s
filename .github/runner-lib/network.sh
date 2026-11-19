@@ -125,10 +125,13 @@ collect() {
   kn get "$(k api-resources --namespaced --verbs=list -o name | grep '\.stacks\.org$' | paste -sd, -)" \
     -o yaml > "$OUT/resources.yaml" 2>&1 || true
   kn get events --sort-by=.lastTimestamp > "$OUT/events.txt" 2>&1 || true
+  # Complete logs (k3s-node.sh raises kubelet rotation so the current file holds them).
   for pod in $(kn get pods -o name 2>/dev/null); do
-    kn logs "$pod" --all-containers --prefix --tail=5000 > "$OUT/logs/${pod#pod/}.log" 2>&1 || true
-    kn logs "$pod" --all-containers --prefix --previous --tail=1000 > "$OUT/logs/${pod#pod/}.previous.log" 2>/dev/null ||
-      rm -f "$OUT/logs/${pod#pod/}.previous.log"
+    { kn logs "$pod" --all-containers --prefix 2>&1 || true; } | gzip > "$OUT/logs/${pod#pod/}.log.gz"
+    if kn logs "$pod" --all-containers --prefix --previous > "$OUT/logs/previous" 2>/dev/null; then
+      gzip -c "$OUT/logs/previous" > "$OUT/logs/${pod#pod/}.previous.log.gz"
+    fi
+    rm -f "$OUT/logs/previous"
   done
 }
 # API server request counters for every client, one series per label set.
@@ -273,6 +276,8 @@ until [[ "$last" == *Initialized=True* ]]; do
   age="$(observation_age)"
   [ -z "$age" ] || echo "$age" >> "$OUT/observation-ages.txt"
   echo "$(stamp) +$(( $(date +%s) - start ))s $(progress) observation_age=${age:--}"
+  # A latched failure never initializes; the network must be recreated.
+  if [[ "$last" == *Failed=True* ]]; then echo "$(stamp) network failed before initialization"; exit 1; fi
 done
 initialized_at="$(date -u +%FT%TZ)"
 head -1 /proc/stat > "$OUT/cpu-initialized.txt" 2>/dev/null || true
