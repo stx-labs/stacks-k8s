@@ -8,7 +8,8 @@
 // latency alone. Participant reads also record their call site: the innermost operator
 // frame (helper) and the outermost one (controller entry point). Cumulative totals are
 // logged as "api-accounting" at startup, every interval (changed or not), and at shutdown,
-// so a consumer can always bracket a time window with snapshots.
+// so a consumer can always bracket a time window with snapshots. Reconcile counts and
+// durations from the controller metrics registry are logged alongside as "pass-accounting".
 package apiaccounting
 
 import (
@@ -26,6 +27,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
 // IntervalVariable enables accounting with a Go duration, e.g. "5s".
@@ -48,6 +50,13 @@ func Wrap(m ctrl.Manager) (ctrl.Manager, error) {
 	log := ctrl.Log.WithName("api-accounting")
 	if err := m.Add(manager.RunnableFunc(func(ctx context.Context) error {
 		recorder.Report(ctx, log, interval)
+		return nil
+	})); err != nil {
+		return nil, err
+	}
+	passes := ctrl.Log.WithName("pass-accounting")
+	if err := m.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		ReportPasses(ctx, passes, metrics.Registry, interval)
 		return nil
 	})); err != nil {
 		return nil, err
@@ -113,9 +122,13 @@ func (r *Recorder) Snapshot() []Series {
 
 // Report logs cumulative totals at startup, every interval and at shutdown.
 func (r *Recorder) Report(ctx context.Context, log logr.Logger, interval time.Duration) {
+	report(ctx, interval, func() { log.Info("cumulative", "series", r.Snapshot()) })
+}
+
+// report emits at startup, every interval and at shutdown.
+func report(ctx context.Context, interval time.Duration, emit func()) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	emit := func() { log.Info("cumulative", "series", r.Snapshot()) }
 	emit()
 	for {
 		select {

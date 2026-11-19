@@ -38,10 +38,15 @@ on:
       mode:
         description: >-
           network runs the example; placement resolves it with the operator on agent-1, server, agent-1;
-          images resolves it on agent-1 with the base image, then HEAD, then base
+          images resolves it with the base image, then HEAD, then base, the operator on operator_node
         type: choice
         options: [network, placement, images]
         default: network
+      rounds_until:
+        description: placement and images modes only; how far each round runs before disposal
+        type: choice
+        options: [resolved, initialized]
+        default: resolved
       base_revert:
         description: images mode only; commit whose revert from HEAD builds the base image
         type: string
@@ -64,14 +69,16 @@ env:
   HOLD_MINUTES: ${{ inputs.hold || '0' }}
   HOLD_RELEASE: /tmp/stacks-k8s-release
   BASE_REVERT: ${{ inputs.mode == 'images' && inputs.base_revert || '' }}
+  ROUNDS_UNTIL: ${{ (inputs.mode == 'placement' || inputs.mode == 'images') && inputs.rounds_until || 'resolved' }}
 
 jobs:
   server:
     name: Server
     runs-on: ubuntu-24.04
     # Expressions have no arithmetic: 105 minutes (setup, up to 20 minutes of
-    # resolution and 60 of initialization, teardown) plus the selected hold.
-    timeout-minutes: ${{ inputs.hold == '90' && 195 || inputs.hold == '60' && 165 || inputs.hold == '30' && 135 || 105 }}
+    # resolution and 60 of initialization, teardown) plus the selected hold; initialized
+    # rounds allow three resolutions and initializations.
+    timeout-minutes: ${{ (inputs.mode == 'placement' || inputs.mode == 'images') && inputs.rounds_until == 'initialized' && 255 || inputs.hold == '90' && 195 || inputs.hold == '60' && 165 || inputs.hold == '30' && 135 || 105 }}
     env:
       KCFG: /etc/rancher/k3s/k3s.yaml
       CTX: default
@@ -126,6 +133,8 @@ jobs:
         if: inputs.mode == 'placement' || inputs.mode == 'images'
         env:
           MODE: ${{ inputs.mode }}
+          OPERATOR_NODE: ${{ inputs.operator_node }}
+          RESOLVE_ONLY: ${{ env.ROUNDS_UNTIL == 'initialized' && 'false' || 'true' }}
         run: |
           set -o pipefail
           . .github/k3s-runners/example-env.sh
@@ -136,7 +145,9 @@ jobs:
           else
             [ -n "$BASE_REVERT" ] || { echo "images mode needs base_revert" >&2; exit 1; }
             title="Operator image (base reverts $BASE_REVERT)"
-            rounds=("base:$agent:$image:ci-base" "head:$agent:$image:ci" "base:$agent:$image:ci-base")
+            node=$agent
+            [ "$OPERATOR_NODE" = agent ] || node=$SERVER_HOST
+            rounds=("base:$node:$image:ci-base" "head:$node:$image:ci" "base:$node:$image:ci-base")
           fi
           .github/k3s-runners/rounds.sh "docs/design/public-api/examples/$EXAMPLE.yaml" out/rounds "$title" \
             "${rounds[@]}" | tee out/rounds.log
@@ -183,7 +194,7 @@ jobs:
       matrix:
         index: [1, 2, 3, 4]
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.hold == '90' && 195 || inputs.hold == '60' && 165 || inputs.hold == '30' && 135 || 105 }}
+    timeout-minutes: ${{ (inputs.mode == 'placement' || inputs.mode == 'images') && inputs.rounds_until == 'initialized' && 255 || inputs.hold == '90' && 195 || inputs.hold == '60' && 165 || inputs.hold == '30' && 135 || 105 }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -199,7 +210,10 @@ jobs:
       - run: .github/k3s-runners/load-operator-image.sh
       - run: .github/k3s-runners/k3s-node.sh agent
       - name: Hold until the server finishes
-        run: .github/k3s-runners/hold-agent.sh $(( 6000 + HOLD_MINUTES * 60 ))
+        run: |
+          limit=$(( 6000 + HOLD_MINUTES * 60 ))
+          [ "$ROUNDS_UNTIL" != initialized ] || limit=15000
+          .github/k3s-runners/hold-agent.sh "$limit"
       - name: Agent log
         if: always()
         run: sudo journalctl -u k3s --no-pager | tail -100 || true
