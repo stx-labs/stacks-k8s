@@ -32,6 +32,8 @@ type StacksProtocolRPC interface {
 	PoXAt(context.Context, string) (rpc.PoX, error)
 	// StackerSet observes the canonical prepared signer set at that same tip.
 	StackerSet(context.Context, uint64, string) (rpc.StackerSet, error)
+	// TenureSortition observes the Bitcoin block that elected a tenure.
+	TenureSortition(context.Context, string) (rpc.TenureSortition, error)
 }
 
 // collectStacksProtocol requires a coherent canonical bracket and preserves height progress time.
@@ -104,6 +106,7 @@ func collectStacksProtocol(
 		observation.HighestStacksHeight = previous.HighestStacksHeight
 		observation.LastHeightAdvancedAt = previous.LastHeightAdvancedAt
 	}
+	observation.Tenure = observeTenure(ctx, node, previous, before.ConsensusHash)
 	if cycle != nil {
 		set, err := node.StackerSet(ctx, *cycle, before.IndexBlockID)
 		if err != nil {
@@ -137,6 +140,28 @@ func collectStacksProtocol(
 		return nil, fmt.Errorf("canonical view changed during observation")
 	}
 	return observation, nil
+}
+
+// observeTenure reuses the immutable sortition of an unchanged tenure. A failed read omits it:
+// the tenure is then unknown, which never establishes progress.
+func observeTenure(
+	ctx context.Context,
+	node StacksProtocolRPC,
+	previous *api.StacksProtocolObservation,
+	consensus string,
+) *api.StacksTenureObservation {
+	if previous != nil && previous.Tenure != nil && previous.Tenure.ConsensusHash == consensus {
+		return previous.Tenure.DeepCopy()
+	}
+	sortition, err := node.TenureSortition(ctx, consensus)
+	if err != nil {
+		return nil
+	}
+	return &api.StacksTenureObservation{
+		ConsensusHash: sortition.ConsensusHash,
+		BurnBlockHash: sortition.BurnBlockHash,
+		BurnHeight:    sortition.BurnHeight,
+	}
 }
 
 // observeStacksProtocol reads the exact Pod IP, then confirms the same process still owns it.

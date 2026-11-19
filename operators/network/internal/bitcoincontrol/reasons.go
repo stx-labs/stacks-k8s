@@ -7,6 +7,8 @@ const (
 	reasonActivationWithdrawn = "ActivationWithdrawn"
 	// reasonAwaitingEnrollmentDemand reports AwaitingEnrollmentDemand.
 	reasonAwaitingEnrollmentDemand = "AwaitingEnrollmentDemand"
+	// reasonAwaitingTenureProgress reports a bounded wait for the current block's Stacks tenure.
+	reasonAwaitingTenureProgress = "AwaitingTenureProgress"
 	// reasonAwaitingPostReceiptObservation reports a retained pre-generation chain sample.
 	reasonAwaitingPostReceiptObservation = "AwaitingPostReceiptObservation"
 	// reasonBaselineCadenceArmed reports BaselineCadenceArmed.

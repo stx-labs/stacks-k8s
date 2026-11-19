@@ -154,64 +154,83 @@ func TestDynamicGateAuthorityRejectsSkippedOrChangedRequirements(t *testing.T) {
 	}
 }
 
+// pox5WindowFixture holds EnrollPoX5 open at 284 with the miner's native reads unavailable.
+func pox5WindowFixture(t *testing.T, ceiling int64) (*testFixture, *api.StacksNetworkParticipant) {
+	t.Helper()
+	f, actor, _ := nextGateFixture(t)
+	ctx := context.Background()
+	actor.Status.Runtime.Protocol = &api.StacksProtocolObservation{
+		Available:  false,
+		Reason:     "ObservationUnavailable",
+		BurnHeight: 282,
+	}
+	if err := f.c.Status().Update(ctx, actor); err != nil {
+		t.Fatal(err)
+	}
+	var genesis api.StacksGenesis
+	if err := f.c.Get(ctx, client.ObjectKey{Namespace: "test", Name: "genesis"}, &genesis); err != nil {
+		t.Fatal(err)
+	}
+	genesis.Spec.Bootstrap.Gates = []api.Gate{
+		{Name: "PrepareBitcoin", BitcoinCeiling: 203},
+		{Name: "EnrollPoX4", BitcoinCeiling: 234},
+		{Name: "PrepareNakamoto", BitcoinCeiling: 251},
+		{Name: "PreparePoX5", BitcoinCeiling: 281},
+		{Name: "EnrollPoX5", BitcoinCeiling: ceiling, TargetCycle: ptr.To(int64(15))},
+		{Name: "PrepareWaterfall", BitcoinCeiling: 299},
+	}
+	if err := f.c.Update(ctx, &genesis); err != nil {
+		t.Fatal(err)
+	}
+	ref := binding("StacksGenesis", &genesis)
+	ref.Fingerprint = foundation.Digest(genesis.Spec)
+	initial := f.readInitial(t)
+	initial.Spec.Genesis = ref
+	if err := f.c.Update(ctx, initial); err != nil {
+		t.Fatal(err)
+	}
+	root := f.root.DeepCopy()
+	root.Status.GenesisRef = &ref
+	state := root.Status.Initialization
+	state.GateIndex, state.AuthorizedCeiling, state.Gates = 4, ceiling, nil
+	for i, gate := range genesis.Spec.Bootstrap.Gates {
+		observation := api.GateObservation{Name: gate.Name}
+		if i < 4 {
+			observation.CompletedAt = ptr.To(metav1.NewTime(f.now))
+		}
+		state.Gates = append(state.Gates, observation)
+	}
+	if err := f.c.Status().Update(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	f.root, f.rpc.height = root, 284
+	return f, actor
+}
+
 // TestPoX5ConfirmationWindow exercises actual offers/receipts while native PoX reads are unavailable.
 func TestPoX5ConfirmationWindow(t *testing.T) {
 	for _, ceiling := range []int64{284, 294} {
 		t.Run(fmt.Sprintf("frozen-ceiling-%d", ceiling), func(t *testing.T) {
-			f, actor, _ := nextGateFixture(t)
+			f, _ := pox5WindowFixture(t, ceiling)
 			ctx := context.Background()
-			actor.Status.Runtime.Protocol = &api.StacksProtocolObservation{
-				Available:  false,
-				Reason:     "ObservationUnavailable",
-				BurnHeight: 282,
-			}
-			if err := f.c.Status().Update(ctx, actor); err != nil {
-				t.Fatal(err)
-			}
-			var genesis api.StacksGenesis
-			if err := f.c.Get(ctx, client.ObjectKey{Namespace: "test", Name: "genesis"}, &genesis); err != nil {
-				t.Fatal(err)
-			}
-			genesis.Spec.Bootstrap.Gates = []api.Gate{
-				{Name: "PrepareBitcoin", BitcoinCeiling: 203},
-				{Name: "EnrollPoX4", BitcoinCeiling: 234},
-				{Name: "PrepareNakamoto", BitcoinCeiling: 251},
-				{Name: "PreparePoX5", BitcoinCeiling: 281},
-				{Name: "EnrollPoX5", BitcoinCeiling: ceiling, TargetCycle: ptr.To(int64(15))},
-				{Name: "PrepareWaterfall", BitcoinCeiling: 299},
-			}
-			if err := f.c.Update(ctx, &genesis); err != nil {
-				t.Fatal(err)
-			}
-			ref := binding("StacksGenesis", &genesis)
-			ref.Fingerprint = foundation.Digest(genesis.Spec)
-			initial := f.readInitial(t)
-			initial.Spec.Genesis = ref
-			if err := f.c.Update(ctx, initial); err != nil {
-				t.Fatal(err)
-			}
-			root := f.root.DeepCopy()
-			root.Status.GenesisRef = &ref
-			state := root.Status.Initialization
-			state.GateIndex, state.AuthorizedCeiling, state.Gates = 4, ceiling, nil
-			for i, gate := range genesis.Spec.Bootstrap.Gates {
-				observation := api.GateObservation{Name: gate.Name}
-				if i < 4 {
-					observation.CompletedAt = ptr.To(metav1.NewTime(f.now))
-				}
-				state.Gates = append(state.Gates, observation)
-			}
-			if err := f.c.Status().Update(ctx, root); err != nil {
-				t.Fatal(err)
-			}
-			f.root, f.rpc.height = root, 284
 			scheduler := f.schedulerFor()
 			if err := f.worker.Step(ctx); err != nil {
 				t.Fatal(err)
 			}
 			f.reconcile(t, scheduler)
 			for height := int64(285); height <= ceiling; height++ {
+				// Unavailable miner reads never show tenure progress, so each block waits out pacing.
 				f.now = f.now.Add(time.Second)
+				if height > 285 {
+					f.reconcile(t, scheduler)
+					if got := f.readInitial(t).Status.Reason; got != "AwaitingTenureProgress" {
+						t.Fatalf("advancement at %d did not wait for tenure progress: %s", height, got)
+					}
+					f.now = f.now.Add(tenurePacingWait)
+					if err := f.worker.Step(ctx); err != nil {
+						t.Fatal(err)
+					}
+				}
 				f.reconcile(t, scheduler)
 				f.reconcile(t, scheduler)
 				offer := f.readRecord(t).Spec.Offer
@@ -237,6 +256,12 @@ func TestPoX5ConfirmationWindow(t *testing.T) {
 			); got.Status.Reason != "FrozenGateReached" || got.Status.Funded[0].Outputs != 203 ||
 				f.rpc.count() != int(ceiling-284) {
 				t.Fatalf("cutoff/funding changed: calls=%d status=%+v", f.rpc.count(), got.Status)
+			}
+			if blocks := ceiling - 284; blocks > 0 {
+				pacing := f.readInitial(t).Status.TenurePacing
+				if pacing == nil || pacing.Unbound != 1 || pacing.Expired != blocks-1 || pacing.Progressed != 0 {
+					t.Fatalf("pacing outcomes = %+v", pacing)
+				}
 			}
 		})
 	}

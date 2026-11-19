@@ -225,6 +225,20 @@ Bounded miner/signer/worker logs and public status are retained under
 `/tmp/stacks-iteration2-followup1-repeat-diagnostics/`. This observation does not
 invalidate the first incarnation's measured stages or establish reliable repetition.
 
+### Bootstrap tenure pacing
+
+The 30-actor example on k3s runners (GitHub Actions runs 44571751878 and 44591479559)
+reproduced this stall at burn 260 and 280, with both base and changed operator images.
+At the 5-second cadence after epoch 3.0, signers rejected tenures whose commits built on
+an older tenure, so a prepare phase produced no Stacks block and every node reported a
+missing canonical anchor. A successful round in the same run advanced Stacks by one block
+across 19 Bitcoin blocks.
+
+Bootstrap advancement after epoch 3.0 now waits, at most 30 seconds per block, for every
+captured miner to hold that block's tenure (see [tenure pacing](../design/public-api/protocol-timing.md#tenure-pacing-after-epoch-30)).
+This is unqualified: its effect on stall frequency, the share of expired waits and the
+added initialization time have not been measured. It does not check commit timing.
+
 ### Accelerated prepared-set failure
 
 `iteration2-followup2-20260912` used the final corrected image `iteration2-followup2`

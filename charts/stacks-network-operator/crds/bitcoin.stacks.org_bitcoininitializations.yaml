@@ -1526,6 +1526,61 @@ spec:
               reason:
                 description: Reason is a bounded machine-readable hold classification.
                 type: string
+              tenurePacing:
+                description: TenurePacing reports how bootstrap advancement after
+                  epoch 3.0 followed Stacks tenures.
+                properties:
+                  delayMilliseconds:
+                    description: DelayMilliseconds is the time advancement waited
+                      beyond its cadence for this decision.
+                    format: int64
+                    minimum: 0
+                    type: integer
+                  expired:
+                    description: Expired counts blocks advanced after the bounded
+                      wait without that observation.
+                    format: int64
+                    minimum: 0
+                    type: integer
+                  height:
+                    description: Height is that block's height.
+                    format: int64
+                    minimum: 0
+                    type: integer
+                  outcome:
+                    description: Outcome reports whether advancement followed observed
+                      tenure progress.
+                    enum:
+                    - Progressed
+                    - Expired
+                    - Unbound
+                    type: string
+                  progressed:
+                    description: Progressed counts blocks advanced after every captured
+                      miner observed the block's tenure.
+                    format: int64
+                    minimum: 0
+                    type: integer
+                  tip:
+                    description: Tip is the last producer block whose next advancement
+                      was paced.
+                    pattern: ^[0-9a-f]{64}$
+                    type: string
+                  unbound:
+                    description: Unbound counts blocks without a matching own generation
+                      receipt, which are not paced.
+                    format: int64
+                    minimum: 0
+                    type: integer
+                required:
+                - delayMilliseconds
+                - expired
+                - height
+                - outcome
+                - progressed
+                - tip
+                - unbound
+                type: object
             type: object
         required:
         - spec

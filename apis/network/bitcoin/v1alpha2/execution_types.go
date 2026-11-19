@@ -307,11 +307,38 @@ type BitcoinInitializationStatus struct {
 	FirstCeilingObservedAt *metav1.Time `json:"firstCeilingObservedAt,omitempty"`
 	// PreparedAt records the first complete wallet/maturity/convergence observation.
 	PreparedAt *metav1.Time `json:"preparedAt,omitempty"`
+	// TenurePacing reports how bootstrap advancement after epoch 3.0 followed Stacks tenures.
+	TenurePacing *BitcoinTenurePacing `json:"tenurePacing,omitempty"`
 	// Phase is a truthful first-gate hold/progress observation.
 	// +kubebuilder:validation:Enum=Waiting;Preparing;Paused;Held;Blocked;Abandoned
 	Phase InitializationPhase `json:"phase,omitempty"`
 	// Reason is a bounded machine-readable hold classification.
 	Reason string `json:"reason,omitempty"`
+}
+
+// BitcoinTenurePacing records the last paced block and counts each outcome once per block.
+type BitcoinTenurePacing struct {
+	// Tip is the last producer block whose next advancement was paced.
+	// +kubebuilder:validation:Pattern=`^[0-9a-f]{64}$`
+	Tip string `json:"tip"`
+	// Height is that block's height.
+	// +kubebuilder:validation:Minimum=0
+	Height int64 `json:"height"`
+	// Outcome reports whether advancement followed observed tenure progress.
+	// +kubebuilder:validation:Enum=Progressed;Expired;Unbound
+	Outcome TenurePacingOutcome `json:"outcome"`
+	// DelayMilliseconds is the time advancement waited beyond its cadence for this decision.
+	// +kubebuilder:validation:Minimum=0
+	DelayMilliseconds int64 `json:"delayMilliseconds"`
+	// Progressed counts blocks advanced after every captured miner observed the block's tenure.
+	// +kubebuilder:validation:Minimum=0
+	Progressed int64 `json:"progressed"`
+	// Expired counts blocks advanced after the bounded wait without that observation.
+	// +kubebuilder:validation:Minimum=0
+	Expired int64 `json:"expired"`
+	// Unbound counts blocks without a matching own generation receipt, which are not paced.
+	// +kubebuilder:validation:Minimum=0
+	Unbound int64 `json:"unbound"`
 }
 
 // BitcoinDrainStatus binds graceful drain evidence to current terminal control.

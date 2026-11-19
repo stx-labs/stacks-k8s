@@ -311,7 +311,7 @@ func (s *Scheduler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.R
 		record.Status.Offer = nil
 		return report(bitcoin.InitializationBlocked, reasonProductionSourceUnavailable)
 	}
-	ready, e := advancementReady(ctx, s.Reader, root, record, authority, height, s.Now())
+	ready, miners, e := capturedAdvancement(ctx, s.Reader, root, record, authority, height, s.Now())
 	if e != nil {
 		return report(bitcoin.InitializationWaiting, reasonStacksReadinessUnavailable)
 	}
@@ -362,6 +362,18 @@ func (s *Scheduler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.R
 	}
 	if s.Now().Before(record.Status.NextOpportunityAt.Time) {
 		return report(bitcoin.InitializationPreparing, reasonCadenceWaiting)
+	}
+	if start, ok := epochStart(authority.genesis, "3.0"); ok {
+		pacing := paceTenure(root, miners, target.Status.LastReceipt, start, height, tip, s.Now())
+		if pacing.waiting {
+			result, e := report(bitcoin.InitializationWaiting, reasonAwaitingTenureProgress)
+			result.RequeueAfter = min(result.RequeueAfter, pacing.remaining)
+			return result, e
+		}
+		if recordPacing(record, pacing.outcome, height, tip, s.Now()) {
+			ctrl.LoggerFrom(ctx).Info("paced bootstrap advancement", "height", height, "tip", tip,
+				"outcome", pacing.outcome, "delayMilliseconds", record.Status.TenurePacing.DelayMilliseconds)
+		}
 	}
 	wallet := record.Spec.PayoutWallet
 	remaining := int64(0) // Outputs the selected miner wallet still needs; zero for the payout wallet.

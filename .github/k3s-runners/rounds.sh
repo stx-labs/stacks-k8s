@@ -63,10 +63,11 @@ done
     echo "admitted cadence (n / p50 / p90 / mean s). Observation age samples the oldest Stacks node"
     echo "observation every 30 s (max / p90 s). CPU is the server host (busy / iowait / steal %)."
     echo "Passes are count / mean ms from the operator's reconcile metrics (observe/converge only where"
-    echo "the image records the path); reads are direct reads."
+    echo "the image records the path); reads are direct reads. Tenure pacing is progressed / expired /"
+    echo "unbound blocks, where the image records it."
     echo
-    echo "| Round | Operator | Initialized (s) | Blocks | Observation age | CPU | Stacks node passes | Observe | Converge | Scheduler passes | Direct reads |"
-    echo "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+    echo "| Round | Operator | Initialized (s) | Blocks | Observation age | CPU | Stacks node passes | Observe | Converge | Scheduler passes | Direct reads | Tenure pacing |"
+    echo "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
     n=0
     for round in "$@"; do
       n=$((n + 1))
@@ -74,7 +75,7 @@ done
       env="$OUT/round-$n-$label/initialized.env"
       value() { sed -n "s/^$1=//p" "$env" 2>/dev/null | head -1; }
       blocks="$(sed -n 's/^blocks_\(.*\)=/\1: /p' "$env" 2>/dev/null | paste -sd';' - | sed 's/;/; /g')"
-      echo "| $n | $label | $(value initialized_seconds) | ${blocks:--} | $(value observation_age_max) / $(value observation_age_p90) | $(value cpu_busy) / $(value cpu_iowait) / $(value cpu_steal) | $(value passes_stacksnode) | $(value passes_observe) | $(value passes_converge) | $(value passes_scheduler) | $(value direct_reads) |"
+      echo "| $n | $label | $(value initialized_seconds) | ${blocks:--} | $(value observation_age_max) / $(value observation_age_p90) | $(value cpu_busy) / $(value cpu_iowait) / $(value cpu_steal) | $(value passes_stacksnode) | $(value passes_observe) | $(value passes_converge) | $(value passes_scheduler) | $(value direct_reads) | $(value tenure_pacing | sed 's|/| / |g') |"
     done
     echo
   fi

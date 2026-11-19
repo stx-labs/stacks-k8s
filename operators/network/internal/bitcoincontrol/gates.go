@@ -99,9 +99,25 @@ func advancementReady(
 	height int64,
 	now time.Time,
 ) (bool, error) {
+	ready, _, err := capturedAdvancement(ctx, reader, root, initial, authority, height, now)
+	return ready, err
+}
+
+// capturedAdvancement is advancementReady that also returns the verified runtimes of
+// captured mining-enabled Stacks nodes, for tenure pacing.
+func capturedAdvancement(
+	ctx context.Context,
+	reader client.Reader,
+	root *api.StacksNetwork,
+	initial *bitcoin.BitcoinInitialization,
+	authority gateAuthority,
+	height int64,
+	now time.Time,
+) (bool, []*api.ParticipantRuntimeStatus, error) {
 	if authority.index == 0 {
-		return true, nil
+		return true, nil, nil
 	}
+	var miners []*api.ParticipantRuntimeStatus
 	pending := false
 	firstAnchor := false
 	establishedChain := false
@@ -115,13 +131,13 @@ func advancementReady(
 			client.ObjectKey{Namespace: root.Namespace, Name: required.Participant.Name},
 			&p,
 		); err != nil {
-			return false, err
+			return false, nil, err
 		}
 		if p.UID != required.Participant.UID || !participantCurrent(root, &p) {
-			return false, errors.New("captured participant identity unavailable")
+			return false, nil, errors.New("captured participant identity unavailable")
 		}
 		if p.Spec.Kind != required.Kind {
-			return false, errors.New("captured participant role differs")
+			return false, nil, errors.New("captured participant role differs")
 		}
 		//nolint:exhaustive // Only consensus actors and stackers contribute to this protocol gate.
 		switch required.Kind {
@@ -136,13 +152,13 @@ func advancementReady(
 				rt.ConfigRef.UID == "" ||
 				rt.ContainerID == "" ||
 				rt.Terminated {
-				return false, errors.New("captured Stacks actor is not ready")
+				return false, nil, errors.New("captured Stacks actor is not ready")
 			}
 			for _, kind := range []string{api.ConditionWorkloadReady, api.ConditionConfigVerified} {
 				condition := meta.FindStatusCondition(p.Status.Conditions, kind)
 				if condition == nil || condition.Status != metav1.ConditionTrue ||
 					condition.ObservedGeneration != p.Generation {
-					return false, errors.New("captured Stacks actor is not verified")
+					return false, nil, errors.New("captured Stacks actor is not verified")
 				}
 			}
 			if p.Spec.Kind == api.ParticipantStacksNode {
@@ -151,8 +167,9 @@ func advancementReady(
 					(view.HighestStacksHeight > 0 || view.StacksHeight > 0) {
 					establishedChain = true
 				}
-				if ptr.Deref(required.MiningEnabled, false) && awaitingFirstAnchor(root, rt, height, now) {
-					firstAnchor = true
+				if ptr.Deref(required.MiningEnabled, false) {
+					miners = append(miners, rt)
+					firstAnchor = firstAnchor || awaitingFirstAnchor(root, rt, height, now)
 				}
 			}
 		case api.ParticipantStacksStacker:
@@ -183,20 +200,26 @@ func advancementReady(
 		}
 	}
 	if authority.gate.Name == api.GateEnrollPoX4 {
-		activation := int64(-1)
-		for _, epoch := range authority.genesis.Spec.Chain.Epochs {
-			if epoch.Name == "2.5" && epoch.StartHeight >= 0 && epoch.StartHeight < math.MaxInt64 {
-				activation = epoch.StartHeight + 1
-			}
-		}
-		if activation < 0 || activation >= authority.gate.BitcoinCeiling {
-			return false, errors.New("PoX activation window unavailable")
+		start, ok := epochStart(authority.genesis, "2.5")
+		activation := start + 1
+		if !ok || activation >= authority.gate.BitcoinCeiling {
+			return false, nil, errors.New("PoX activation window unavailable")
 		}
 		if height >= activation {
-			return pending || firstAnchor && !establishedChain, nil
+			return pending || firstAnchor && !establishedChain, miners, nil
 		}
 	}
-	return true, nil
+	return true, miners, nil
+}
+
+// epochStart returns the frozen start height of the named epoch.
+func epochStart(genesis *api.StacksGenesis, name string) (int64, bool) {
+	for _, epoch := range genesis.Spec.Chain.Epochs {
+		if epoch.Name == name && epoch.StartHeight >= 0 && epoch.StartHeight < math.MaxInt64 {
+			return epoch.StartHeight, true
+		}
+	}
+	return 0, false
 }
 
 // awaitingFirstAnchor distinguishes confirmed empty native chainstate from unavailable observations.
@@ -206,9 +229,7 @@ func awaitingFirstAnchor(
 	height int64,
 	now time.Time,
 ) bool {
-	view := runtime.Protocol
-	policy := foundation.ObservationPolicy()
-	freshness := time.Duration(3*policy.PollIntervalSeconds+policy.RPCAllowanceSeconds) * time.Second
+	view := currentProtocolView(root, runtime, now)
 	return view != nil && !view.Available && view.Reason == api.ReasonAwaitingFirstAnchor &&
 		view.NetworkID == 0x80000000 &&
 		view.StacksHeight == 0 &&
@@ -216,14 +237,27 @@ func awaitingFirstAnchor(
 		view.StacksTip == strings.Repeat("0", 64) &&
 		view.FullySynced &&
 		height >= 0 &&
-		view.BurnHeight == uint64(height) &&
-		root.Status.GenesisRef != nil &&
-		view.GenesisUID == root.Status.GenesisRef.UID &&
-		runtime.PodRef != nil &&
-		view.PodUID == runtime.PodRef.UID &&
-		view.ContainerID == runtime.ContainerID &&
-		view.ConfigurationDigest == runtime.ConfigurationDigest &&
-		!view.ObservedAt.IsZero() &&
-		!view.ObservedAt.After(now) &&
-		now.Sub(view.ObservedAt.Time) <= freshness
+		view.BurnHeight == uint64(height)
+}
+
+// currentProtocolView returns a fresh native observation of exactly this process and genesis.
+func currentProtocolView(
+	root *api.StacksNetwork,
+	runtime *api.ParticipantRuntimeStatus,
+	now time.Time,
+) *api.StacksProtocolObservation {
+	view := runtime.Protocol
+	policy := foundation.ObservationPolicy()
+	freshness := time.Duration(3*policy.PollIntervalSeconds+policy.RPCAllowanceSeconds) * time.Second
+	if view == nil || root.Status.GenesisRef == nil || view.GenesisUID != root.Status.GenesisRef.UID ||
+		runtime.PodRef == nil ||
+		view.PodUID != runtime.PodRef.UID ||
+		view.ContainerID != runtime.ContainerID ||
+		view.ConfigurationDigest != runtime.ConfigurationDigest ||
+		view.ObservedAt.IsZero() ||
+		view.ObservedAt.After(now) ||
+		now.Sub(view.ObservedAt.Time) > freshness {
+		return nil
+	}
+	return view
 }

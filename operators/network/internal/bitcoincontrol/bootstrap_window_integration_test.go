@@ -4,6 +4,7 @@ package bitcoincontrol
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	bitcoin "github.com/cylewitruk-stacks/stacks-k8s/apis/network/bitcoin/v1alpha2"
@@ -96,5 +97,38 @@ func TestBootstrapAuthorityAPI(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			exerciseBootstrapAuthorityChange(t, bootstrapAPIFixture(t), mode, false)
 		})
+	}
+}
+
+// TestTenurePacingAPI persists pacing evidence and rejects values outside its schema.
+func TestTenurePacingAPI(t *testing.T) {
+	f := bootstrapAPIFixture(t)
+	valid := bitcoin.BitcoinTenurePacing{
+		Tip:               strings.Repeat("a", 64),
+		Height:            260,
+		Outcome:           bitcoin.TenurePacingExpired,
+		DelayMilliseconds: 1500,
+		Progressed:        7,
+		Expired:           1,
+		Unbound:           1,
+	}
+	initial := f.readInitial(t)
+	initial.Status.TenurePacing = valid.DeepCopy()
+	if err := f.c.Status().Update(t.Context(), initial); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.readInitial(t).Status.TenurePacing; got == nil || *got != valid {
+		t.Fatalf("API lost pacing evidence: %+v", got)
+	}
+	for name, change := range map[string]func(*bitcoin.BitcoinTenurePacing){
+		"unknown outcome": func(p *bitcoin.BitcoinTenurePacing) { p.Outcome = "Skipped" },
+		"short tip":       func(p *bitcoin.BitcoinTenurePacing) { p.Tip = p.Tip[2:] },
+		"negative count":  func(p *bitcoin.BitcoinTenurePacing) { p.Expired = -1 },
+	} {
+		invalid := f.readInitial(t)
+		change(invalid.Status.TenurePacing)
+		if err := f.c.Status().Update(t.Context(), invalid); err == nil {
+			t.Fatalf("API accepted %s", name)
+		}
 	}
 }

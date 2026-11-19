@@ -5001,6 +5001,30 @@ spec:
                         description: StacksTip identifies the canonical Stacks header.
                         maxLength: 64
                         type: string
+                      tenure:
+                        description: Tenure identifies the Bitcoin block that elected
+                          the canonical tip's tenure.
+                        properties:
+                          burnBlockHash:
+                            description: BurnBlockHash is the electing Bitcoin block
+                              hash, in Bitcoin Core's display order.
+                            pattern: ^[0-9a-f]{64}$
+                            type: string
+                          burnHeight:
+                            description: BurnHeight is the electing Bitcoin block
+                              height.
+                            format: int64
+                            type: integer
+                          consensusHash:
+                            description: ConsensusHash identifies the canonical tip's
+                              tenure.
+                            pattern: ^[0-9a-f]{40}$
+                            type: string
+                        required:
+                        - burnBlockHash
+                        - burnHeight
+                        - consensusHash
+                        type: object
                     required:
                     - available
                     - burnConsensusHash

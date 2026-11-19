@@ -75,7 +75,8 @@ sample_receipts() {
 # n/p50/p90/mean seconds. CPU is this host's /proc/stat between two snapshots: busy,
 # iowait and steal percentages. Passes are count/mean milliseconds from pass accounting:
 # all Stacks node passes, their observe/converge split where the image records it, and the
-# Bitcoin bootstrap scheduler.
+# Bitcoin bootstrap scheduler. Tenure pacing is progressed/expired/unbound blocks, where the
+# image records it.
 initialization_summary() {
   local schedule
   schedule="$(kn get stacksnetworkparticipants -o json |
@@ -115,6 +116,8 @@ initialization_summary() {
     }
     END { for (k in n) printf "passes_%s=%d/%.0f\n", k, n[k], 1000 * s[k] / n[k] }' "$OUT/operator-passes-initialization.txt"
   awk '$1 !~ /^#/ { n += $1 } END { if (NR) printf "direct_reads=%d\n", n }' "$OUT/operator-reads-initialization.txt"
+  kn get bitcoininitializations.bitcoin.stacks.org -o json |
+    jq -r '.items[].status.tenurePacing // empty | "tenure_pacing=\(.progressed)/\(.expired)/\(.unbound)"'
 }
 # Evidence is lost with the namespace and the runner: save it before teardown or on failure.
 collect() {

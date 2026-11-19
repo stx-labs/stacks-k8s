@@ -61,6 +61,20 @@ type StacksProtocolObservation struct {
 	CycleLength uint64 `json:"cycleLength"`
 	// PreparedSet reports the frozen active prepared-set gate, when one is required.
 	PreparedSet *PreparedSignerSetObservation `json:"preparedSet,omitempty"`
+	// Tenure identifies the Bitcoin block that elected the canonical tip's tenure.
+	Tenure *StacksTenureObservation `json:"tenure,omitempty"`
+}
+
+// StacksTenureObservation binds a canonical Stacks tip's tenure to its electing Bitcoin block.
+type StacksTenureObservation struct {
+	// ConsensusHash identifies the canonical tip's tenure.
+	// +kubebuilder:validation:Pattern=`^[0-9a-f]{40}$`
+	ConsensusHash string `json:"consensusHash"`
+	// BurnBlockHash is the electing Bitcoin block hash, in Bitcoin Core's display order.
+	// +kubebuilder:validation:Pattern=`^[0-9a-f]{64}$`
+	BurnBlockHash string `json:"burnBlockHash"`
+	// BurnHeight is the electing Bitcoin block height.
+	BurnHeight uint64 `json:"burnHeight"`
 }
 
 // PreparedSignerSetObservation retains exact native protocol weights for a frozen cycle.

@@ -25,6 +25,16 @@ type nativeObservationFixture struct {
 	unavailable bool
 	fail        bool
 	cycle       uint64
+	sortitions  int
+	noSortition bool
+}
+
+func (n *nativeObservationFixture) TenureSortition(_ context.Context, consensus string) (rpc.TenureSortition, error) {
+	n.sortitions++
+	if n.noSortition {
+		return rpc.TenureSortition{}, fmt.Errorf("unavailable")
+	}
+	return rpc.TenureSortition{ConsensusHash: consensus, BurnBlockHash: strings.Repeat("7", 64), BurnHeight: 238}, nil
 }
 
 func (n *nativeObservationFixture) ChainView(context.Context) (rpc.ChainView, error) {
@@ -111,6 +121,41 @@ func TestCoherentProtocolObservationPreservesHeightProgressAcrossReorgs(t *testi
 	}
 	if advanced.HighestStacksHeight != 31 || advanced.LastHeightAdvancedAt.Equal(&first.LastHeightAdvancedAt) {
 		t.Fatal("strictly greater height did not advance progress")
+	}
+}
+
+func TestTenureIsReadOncePerConsensusHashAndOmittedWhenUnavailable(t *testing.T) {
+	now := time.Now()
+	node := &nativeObservationFixture{
+		view: rpc.ChainView{
+			Info: rpc.Info{
+				NetworkID:    0x80000000,
+				BurnHeight:   240,
+				StacksHeight: 30,
+				Tip:          strings.Repeat("1", 64),
+			},
+			ConsensusHash:     strings.Repeat("2", 40),
+			BurnConsensusHash: strings.Repeat("3", 40),
+			IndexBlockID:      strings.Repeat("4", 64),
+		},
+	}
+	first, err := collectStacksProtocol(context.Background(), node, nil, nil, now)
+	want := api.StacksTenureObservation{
+		ConsensusHash: strings.Repeat("2", 40), BurnBlockHash: strings.Repeat("7", 64), BurnHeight: 238,
+	}
+	if err != nil || first.Tenure == nil || *first.Tenure != want || node.sortitions != 1 {
+		t.Fatalf("tenure = %+v, %v after %d reads", first.Tenure, err, node.sortitions)
+	}
+	node.view.StacksHeight, node.view.Tip = 31, strings.Repeat("5", 64)
+	same, err := collectStacksProtocol(context.Background(), node, first, nil, now.Add(time.Second))
+	if err != nil || same.Tenure == nil || *same.Tenure != want || node.sortitions != 1 {
+		t.Fatal("a block in the same tenure read its sortition again")
+	}
+	node.view.ConsensusHash = strings.Repeat("8", 40)
+	node.noSortition = true
+	unknown, err := collectStacksProtocol(context.Background(), node, same, nil, now.Add(2*time.Second))
+	if err != nil || !unknown.Available || unknown.Tenure != nil || node.sortitions != 2 {
+		t.Fatal("an unreadable new tenure kept the previous tenure or withdrew the observation")
 	}
 }
 

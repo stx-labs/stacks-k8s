@@ -107,6 +107,24 @@ Bounded actions cannot bypass a hold or authorize overshoot. No ceiling fences a
 external administrator or modified actor that independently generates blocks; those
 inputs can invalidate bootstrap and must surface the missed boundary.
 
+## Tenure pacing after epoch 3.0
+
+From the frozen epoch 3.0 start height until initialization completes, the producer
+advances past block N only after every captured mining-enabled Stacks node reports a
+fresh canonical tip from the tenure that N elected. The node's processed Bitcoin tip
+must be N, and the tenure's electing block must be the producer's exact block hash.
+Signers reject a tenure that builds on an older one, so a prepare phase without Stacks
+blocks leaves no anchor and stalls every node.
+
+The wait is bounded at 30 seconds from the receipt that generated N; it applies only
+when the target's last receipt is the generation of N. Cadence still sets the minimum
+interval, and an expired wait relaxes no other advancement check. `status.tenurePacing`
+on BitcoinInitialization counts each block once as `Progressed`, `Expired` or `Unbound`
+(no matching own receipt) and reports the last block's delay beyond its cadence.
+This follows Core's signer tests, which mine the next block only after the tenure's
+first block; it does not check that miners' commits for N+1 have reached the producer.
+Baseline production after initialization is not paced.
+
 ## What readiness proves
 
 Every release uses current canonical observations and the captured identity bindings;

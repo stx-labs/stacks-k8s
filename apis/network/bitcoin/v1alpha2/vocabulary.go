@@ -73,6 +73,19 @@ const (
 	InitializationAbandoned InitializationPhase = "Abandoned"
 )
 
+// TenurePacingOutcome names supported BitcoinTenurePacing.Outcome values. Unknown input still requires
+// validation.
+type TenurePacingOutcome string
+
+const (
+	// TenurePacingProgressed is the Progressed value of TenurePacingOutcome.
+	TenurePacingProgressed TenurePacingOutcome = "Progressed"
+	// TenurePacingExpired is the Expired value of TenurePacingOutcome.
+	TenurePacingExpired TenurePacingOutcome = "Expired"
+	// TenurePacingUnbound is the Unbound value of TenurePacingOutcome.
+	TenurePacingUnbound TenurePacingOutcome = "Unbound"
+)
+
 // DrainOutcome names supported BitcoinDrainStatus.Outcome values. Unknown input still requires validation.
 type DrainOutcome string
 

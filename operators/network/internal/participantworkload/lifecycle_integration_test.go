@@ -160,6 +160,11 @@ func TestActorAPILifecycleAndStatusIsolation(t *testing.T) {
 						},
 						ObservedAt: metav1.Now(),
 					},
+					Tenure: &api.StacksTenureObservation{
+						ConsensusHash: strings.Repeat("c", 40),
+						BurnBlockHash: strings.Repeat("b", 64),
+						BurnHeight:    240,
+					},
 				}
 			}
 			must(
@@ -185,7 +190,9 @@ func TestActorAPILifecycleAndStatusIsolation(t *testing.T) {
 			if kind == "StacksNode" &&
 				(p.Status.Runtime.Protocol == nil ||
 					p.Status.Runtime.Protocol.PreparedSet.Signers[0].StackedAmount !=
-						"340282366920938463463374607431768211455") {
+						"340282366920938463463374607431768211455" ||
+					p.Status.Runtime.Protocol.Tenure == nil ||
+					*p.Status.Runtime.Protocol.Tenure != *state.Protocol.Tenure) {
 				t.Fatal("API lost exact native protocol facts")
 			}
 			if p.Status.Admission == nil || p.Status.Admission.PolicyDigest != admission.PolicyDigest {

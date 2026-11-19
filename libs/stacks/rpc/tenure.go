@@ -46,6 +46,44 @@ func (c *Client) NakamotoTip(ctx context.Context, view ChainView) (bool, error) 
 	return true, nil
 }
 
+// TenureSortition identifies the Bitcoin block whose sortition elected a tenure.
+type TenureSortition struct {
+	// ConsensusHash identifies the tenure.
+	ConsensusHash string
+	// BurnBlockHash is the electing Bitcoin block hash, in Bitcoin Core's display order.
+	BurnBlockHash string
+	// BurnHeight is the electing Bitcoin block height.
+	BurnHeight uint64
+}
+
+// TenureSortition reads the sortition that elected the tenure with this consensus hash.
+// The mapping is immutable, so callers may retain it for an unchanged consensus hash.
+func (c *Client) TenureSortition(ctx context.Context, consensusHash string) (TenureSortition, error) {
+	consensus, err := hex.DecodeString(consensusHash)
+	if err != nil || len(consensus) != 20 || consensusHash != hex.EncodeToString(consensus) ||
+		consensusHash == strings.Repeat("0", 40) {
+		return TenureSortition{}, errors.New("invalid tenure consensus hash")
+	}
+	var wire []struct {
+		BurnBlockHash string  `json:"burn_block_hash"`
+		BurnHeight    *uint64 `json:"burn_block_height"`
+		Consensus     string  `json:"consensus_hash"`
+	}
+	if err := c.get(ctx, "/v3/sortitions/consensus/"+consensusHash, &wire); err != nil {
+		return TenureSortition{}, err
+	}
+	if len(wire) != 1 || wire[0].Consensus != "0x"+consensusHash || wire[0].BurnHeight == nil ||
+		!strings.HasPrefix(wire[0].BurnBlockHash, "0x") ||
+		!validHash(wire[0].BurnBlockHash[2:]) {
+		return TenureSortition{}, errors.New("native tenure sortition differs from request")
+	}
+	return TenureSortition{
+		ConsensusHash: consensusHash,
+		BurnBlockHash: wire[0].BurnBlockHash[2:],
+		BurnHeight:    *wire[0].BurnHeight,
+	}, nil
+}
+
 // Native header discriminators select incompatible RPC response shapes.
 const (
 	// headerKindEpoch2 selects a legacy anchored block header.

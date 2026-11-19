@@ -10,7 +10,7 @@ Repository MIT licensing applies; dependencies retain their licenses.
 | --- | --- |
 | `identity` | Existing regtest identities, validated c32check address encoding/decoding and explicit compressed private-key normalization |
 | `clarity` | Consensus tags 0–14: signed/unsigned 128-bit integers, buffers, principals, responses, optionals, lists, sorted tuples and ASCII/UTF-8 strings |
-| `rpc` | Native info/account/PoX, contract source/variable/read-only observations, one-shot transaction submission and exact canonical inclusion |
+| `rpc` | Native info/account/PoX, tenure sortition, contract source/variable/read-only observations, one-shot transaction submission and exact canonical inclusion |
 | `transaction` | Standard P2PKH single-signature transfers, contract calls and versioned Clarity 1–6 publications; explicit chain ID, version, nonce, fee and post-condition mode |
 | `signing` | SIP-018 RSV signatures, PoX-4 signer authorizations and enrollment/extension arguments, PoX-5 direct-manager grants |
 

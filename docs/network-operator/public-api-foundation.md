@@ -50,6 +50,8 @@ without claiming PoX readiness. Any captured node's established-chain observatio
 withdraws that allowance; legacy enrollment transactions then supply the demand.
 Clarity-3 contract deployment additionally requires a native canonical Nakamoto
 header, since Bitcoin can cross epoch 3.0 while the Stacks tip remains epoch 2.5.
+After epoch 3.0, bootstrap [tenure pacing](../design/public-api/protocol-timing.md#tenure-pacing-after-epoch-30)
+holds each Bitcoin block, for at most 30 seconds, until every captured miner holds its tenure.
 
 Bootstrap requirements capture values needed after a controller restart, including initial
 mining-enabled roles. Compatible image, resource and seed changes may proceed during
@@ -156,7 +158,8 @@ the same participant generation, admission and published runtime, network genera
 genesis, and a ready actor Pod with the same UID, container and digests. Any watched change
 (the participant, its owned resources, its Pod, the network or a dependency) discards that
 pass, as does age over 30 s, which bounds repair of unwatched inputs such as Secrets. The
-next pass then converges the workload again. Generated Stacks nodes use a
+next pass then converges the workload again. Each observation also records the
+Bitcoin block that elected the tip's tenure; that sortition is read once per tenure. Generated Stacks nodes use a
 500 ms idle miner initiative threshold for the accelerated regtest profile;
 Core's event loop does not guarantee a wakeup every 500 ms.
 
