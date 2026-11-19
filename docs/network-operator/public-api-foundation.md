@@ -141,7 +141,8 @@ Optional faucets, extra actors and telemetry do not automatically gate global he
 The release observation policy uses 2 s polls, a 10 s RPC bound, 5 s heartbeats and 16 s
 freshness. Progress windows are `max(120 s, 3 × cadence) + 10 s`, using the upper bound of
 the selected cadence when timing varies. Status heartbeats do not refresh the original receipt or
-inclusion time. Readiness and fault cleanup remain separate from protocol recovery.
+inclusion time. Readiness and fault cleanup remain separate from protocol recovery. Stacks node
+observations also record the Bitcoin block that elected the tip's tenure, read once per tenure.
 
 Worker watches ignore execution heartbeats and native observation-only updates;
 protocol polling remains timer-driven. Actor workload controllers reconcile up to 8
@@ -158,8 +159,7 @@ the same participant generation, admission and published runtime, network genera
 genesis, and a ready actor Pod with the same UID, container and digests. Any watched change
 (the participant, its owned resources, its Pod, the network or a dependency) discards that
 pass, as does age over 30 s, which bounds repair of unwatched inputs such as Secrets. The
-next pass then converges the workload again. Each observation also records the
-Bitcoin block that elected the tip's tenure; that sortition is read once per tenure. Generated Stacks nodes use a
+next pass then converges the workload again. Generated Stacks nodes use a
 500 ms idle miner initiative threshold for the accelerated regtest profile;
 Core's event loop does not guarantee a wakeup every 500 ms.
 
