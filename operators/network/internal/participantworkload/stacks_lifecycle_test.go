@@ -291,6 +291,86 @@ func TestMinerActivationUsesFreshExactLocalWalletObservation(t *testing.T) {
 			}
 		})
 	}
+	t.Run("recovers from a refresh-only observation", func(t *testing.T) {
+		stale := execution.DeepCopy()
+		stale.Status.Observation.ObservedAt.Time = now.Add(-11 * time.Second)
+		c := testClient(t, btc, wallet, init, stale)
+		r := Reconciler{Client: c, Reader: c, Kind: "StacksNode"}
+		if err := r.stacksStartAuthorized(ctx, root, p, now); err == nil {
+			t.Fatal("stale observation authorized miner activation")
+		}
+		fresh := stale.DeepCopy()
+		fresh.Status.Observation.ObservedAt.Time = now
+		if err := c.Update(ctx, fresh); err != nil {
+			t.Fatal(err)
+		}
+		if stacksStartDependencyChanged(stale, fresh) {
+			t.Fatal("test no longer covers a recovery the dependency watch suppresses")
+		}
+		if !retriesUnwatched(reasonPrepareBitcoinUnavailable) {
+			t.Fatal("PrepareBitcoinUnavailable waits for an event that a refresh-only recovery never emits")
+		}
+		if err := r.stacksStartAuthorized(ctx, root, p, now); err != nil {
+			t.Fatalf("retry after refresh-only recovery: %v", err)
+		}
+	})
+}
+
+func TestStacksStartDependencyChangedIgnoresRefreshesAndSchedulerProgress(t *testing.T) {
+	now := metav1.Now()
+	owner := []metav1.OwnerReference{
+		{APIVersion: "network.stacks.org/v1alpha2", Kind: "StacksNetwork", Name: "network", UID: "network-uid"},
+	}
+	execution := &bitcoin.BitcoinExecution{
+		ObjectMeta: metav1.ObjectMeta{Name: "execution", UID: "execution-uid", OwnerReferences: owner},
+		Spec:       bitcoin.BitcoinExecutionSpec{NetworkUID: "network-uid"},
+		Status: bitcoin.BitcoinExecutionStatus{Observation: &bitcoin.BitcoinObservation{
+			ObservedAt: now,
+			Height:     203,
+			Wallets:    []bitcoin.BitcoinWalletObservation{{Name: "miner", Ready: true, MatureOutputs: 1}},
+		}},
+	}
+	initialization := &bitcoin.BitcoinInitialization{
+		ObjectMeta: metav1.ObjectMeta{Name: "initialization", UID: "initialization-uid", OwnerReferences: owner},
+		Spec:       bitcoin.BitcoinInitializationSpec{NetworkUID: "network-uid"},
+	}
+	cases := []struct {
+		name   string
+		old    client.Object
+		mutate func(client.Object)
+		want   bool
+	}{
+		{"observation refresh", execution, func(o client.Object) {
+			o.(*bitcoin.BitcoinExecution).Status.Observation.ObservedAt = metav1.NewTime(now.Add(time.Second))
+		}, false},
+		{"wallet maturity", execution, func(o client.Object) {
+			o.(*bitcoin.BitcoinExecution).Status.Observation.Wallets[0].MatureOutputs = 2
+		}, true},
+		{"execution replaced", execution, func(o client.Object) { o.SetUID("replacement") }, true},
+		{"execution owner", execution, func(o client.Object) { o.SetOwnerReferences(nil) }, true},
+		{"execution deletion", execution, func(o client.Object) { o.SetDeletionTimestamp(&now) }, true},
+		{"scheduler progress", initialization, func(o client.Object) {
+			record := o.(*bitcoin.BitcoinInitialization)
+			record.Status.Phase = bitcoin.InitializationPreparing
+			record.Status.NextOpportunityAt = &now
+		}, false},
+		{"preparation", initialization, func(o client.Object) {
+			o.(*bitcoin.BitcoinInitialization).Status.PreparedAt = &now
+		}, true},
+		{"initialization spec", initialization, func(o client.Object) {
+			o.(*bitcoin.BitcoinInitialization).Spec.Genesis.UID = "other-genesis"
+		}, true},
+		{"initialization owner", initialization, func(o client.Object) { o.SetOwnerReferences(nil) }, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			current := tc.old.DeepCopyObject().(client.Object)
+			tc.mutate(current)
+			if got := stacksStartDependencyChanged(tc.old, current); got != tc.want {
+				t.Fatalf("stacksStartDependencyChanged = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 // stacksInputFixture supplies exact public dependencies for native Stacks rendering.

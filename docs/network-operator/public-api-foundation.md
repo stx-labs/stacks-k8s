@@ -144,7 +144,10 @@ inclusion time. Readiness and fault cleanup remain separate from protocol recove
 Worker watches ignore execution heartbeats and native observation-only updates;
 protocol polling remains timer-driven. Actor workload controllers reconcile up to 8
 participants concurrently, because prepared-set gates need every Stacks node's poll fresh
-at once: a full pass over all nodes must finish within the 16 s window. Controls, admission and process identity
+at once: a full pass over all nodes must finish within the 16 s window. Their Bitcoin
+record watches route through the cache and ignore observation refreshes and scheduler
+progress; actors waiting on Bitcoin preparation retry every 5 s, so an observation that
+becomes fresh again without changing still releases them. Controls, admission and process identity
 changes still trigger immediate reconciliation. Generated Stacks nodes use a
 500 ms idle miner initiative threshold for the accelerated regtest profile;
 Core's event loop does not guarantee a wakeup every 500 ms.

@@ -119,13 +119,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 				}
 			}
 		}
-		if reason == reasonControlUnavailable || reason == reasonConfigurationUnavailable ||
-			reason == reasonRuntimeIdentityUnavailable ||
-			reason == reasonWorkloadUnavailable ||
-			reason == api.ReasonStopping ||
-			reason == api.ReasonTerminationUnknown ||
-			reason == reasonRestarting ||
-			reason == reasonDrainingControl {
+		if retriesUnwatched(reason) {
 			result.RequeueAfter = 5 * time.Second
 		}
 		if reflect.DeepEqual(p.Status.Runtime, out.Runtime) &&
@@ -590,8 +584,9 @@ func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 	if r.kind() != api.ParticipantBitcoinNode {
 		dependencies := handler.EnqueueRequestsFromMapFunc(
 			func(ctx context.Context, object client.Object) []reconcile.Request {
+				// Routing only selects candidates; each reconcile re-reads admitted identity uncached.
 				var participants api.StacksNetworkParticipantList
-				if err := r.Reader.List(ctx, &participants, client.InNamespace(object.GetNamespace())); err != nil {
+				if err := r.Client.List(ctx, &participants, client.InNamespace(object.GetNamespace())); err != nil {
 					return nil
 				}
 				var requests []reconcile.Request
@@ -603,8 +598,12 @@ func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 				return requests
 			},
 		)
-		registration = registration.Watches(&bitcoin.BitcoinInitialization{}, dependencies).
-			Watches(&bitcoin.BitcoinExecution{}, dependencies).
+		bitcoinChanges := predicate.Funcs{UpdateFunc: func(e event.UpdateEvent) bool {
+			return stacksStartDependencyChanged(e.ObjectOld, e.ObjectNew)
+		}}
+		registration = registration.
+			Watches(&bitcoin.BitcoinInitialization{}, dependencies, builder.WithPredicates(bitcoinChanges)).
+			Watches(&bitcoin.BitcoinExecution{}, dependencies, builder.WithPredicates(bitcoinChanges)).
 			Watches(
 				&api.StacksNetworkParticipant{},
 				dependencies,
@@ -618,6 +617,39 @@ func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 			)
 	}
 	return registration.Complete(r)
+}
+
+// retriesUnwatched reports waiting states that can recover without a watched change, such as
+// a Bitcoin observation becoming fresh again with identical contents.
+func retriesUnwatched(reason string) bool {
+	switch reason {
+	case reasonControlUnavailable, reasonConfigurationUnavailable, reasonPrepareBitcoinUnavailable,
+		reasonRuntimeIdentityUnavailable, reasonWorkloadUnavailable, api.ReasonStopping,
+		api.ReasonTerminationUnknown, reasonRestarting, reasonDrainingControl:
+		return true
+	}
+	return false
+}
+
+// stacksStartDependencyChanged keeps Bitcoin record changes that stacksStartAuthorized can observe,
+// omitting observation refreshes and scheduler progress. Freshness recovery relies on the
+// PrepareBitcoinUnavailable retry instead.
+func stacksStartDependencyChanged(old, current client.Object) bool {
+	if old == nil || current == nil || old.GetUID() != current.GetUID() ||
+		!reflect.DeepEqual(old.GetDeletionTimestamp(), current.GetDeletionTimestamp()) ||
+		!reflect.DeepEqual(old.GetOwnerReferences(), current.GetOwnerReferences()) {
+		return true
+	}
+	switch before := old.(type) {
+	case *bitcoin.BitcoinExecution:
+		after, ok := current.(*bitcoin.BitcoinExecution)
+		return !ok || foundation.BitcoinExecutionChanged(before, after)
+	case *bitcoin.BitcoinInitialization:
+		after, ok := current.(*bitcoin.BitcoinInitialization)
+		return !ok || !reflect.DeepEqual(before.Spec, after.Spec) ||
+			!reflect.DeepEqual(before.Status.PreparedAt, after.Status.PreparedAt)
+	}
+	return true
 }
 
 // actorRuntimeDependencyChanged excludes protocol telemetry from actor configuration watches.
