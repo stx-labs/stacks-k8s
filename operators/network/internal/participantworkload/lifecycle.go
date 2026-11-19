@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -146,13 +147,18 @@ func (r *Reconciler) actorPod(
 	); err != nil {
 		return nil, err
 	}
-	owner := metav1.GetControllerOf(&pod)
-	if owner == nil || owner.Kind != common.KindStatefulSet || owner.UID != workload.UID ||
-		pod.Labels[api.LabelParticipantUID] != string(p.UID) ||
-		pod.Labels[api.LabelNetworkUID] != string(p.Spec.NetworkUID) {
+	if !actorPodOwned(&pod, p, workload.UID) {
 		return nil, fmt.Errorf("actor Pod identity is foreign")
 	}
 	return &pod, nil
+}
+
+// actorPodOwned requires the participant's own actor StatefulSet and identity labels.
+func actorPodOwned(pod *corev1.Pod, p *api.StacksNetworkParticipant, workload types.UID) bool {
+	owner := metav1.GetControllerOf(pod)
+	return owner != nil && owner.Kind == common.KindStatefulSet && owner.UID == workload &&
+		pod.Labels[api.LabelParticipantUID] == string(p.UID) &&
+		pod.Labels[api.LabelNetworkUID] == string(p.Spec.NetworkUID)
 }
 
 // retainPod persists a finalizer before initiating process termination.

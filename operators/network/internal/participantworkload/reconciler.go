@@ -26,7 +26,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -55,6 +54,8 @@ type Reconciler struct {
 	BeforeStop func(context.Context, *api.StacksNetworkParticipant) (bool, error)
 	// candidateConfiguration is confined to a local support-preparation reconciler copy.
 	candidateConfiguration *foundation.CandidateConfiguration
+	// converged lets ready Stacks node polls skip convergence; nil always converges.
+	converged *convergenceMemory
 }
 
 // kind preserves Bitcoin registration compatibility while allowing explicit actor domains.
@@ -80,6 +81,9 @@ func (r *Reconciler) finalizer() string {
 
 // Reconcile converges actor resources only while current admission permits activation.
 func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
+	epoch := r.converged.epoch(request.NamespacedName)
+	path := pathConverge
+	defer observePass(r.kind(), &path, time.Now())
 	var p api.StacksNetworkParticipant
 	if err := r.Reader.Get(ctx, request.NamespacedName, &p); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -196,6 +200,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		); err != nil {
 			return ctrl.Result{}, err
 		}
+	}
+	if pod := r.convergedPod(ctx, &root, &p, &state); pod != nil {
+		path = pathObserve
+		if err := r.observeStacksProtocol(ctx, &root, &p, pod, &state); err != nil {
+			r.converged.forget(request.NamespacedName)
+		}
+		return finish(metav1.ConditionTrue, reasonReady, readyMessage)
 	}
 	if err := r.authorized(ctx, &root, &p); err != nil {
 		return finish(metav1.ConditionFalse, api.ReasonAdmissionUnavailable, err.Error())
@@ -419,20 +430,19 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 			)
 		}
 	}
-	if podReady(pod) && pod.Annotations[api.AnnotationPolicyDigest] == state.PolicyDigest &&
-		(p.Spec.Kind == api.ParticipantBitcoinNode ||
-			pod.Annotations[api.AnnotationConfigurationDigest] == state.ConfigurationDigest) {
-		if p.Spec.Kind == api.ParticipantStacksNode {
-			if err := r.observeStacksProtocol(ctx, &currentRoot, &p, pod, &state); err != nil && state.Protocol != nil {
-				state.Protocol.Available = false
-				state.Protocol.Reason = api.ReasonObservationUnavailable
-			}
+	if servesAdmitted(p.Spec.Kind, pod, &state) {
+		if p.Spec.Kind != api.ParticipantStacksNode {
+			return finish(metav1.ConditionTrue, reasonReady, readyMessage)
 		}
-		return finish(
-			metav1.ConditionTrue,
-			reasonReady,
-			"Native actor listener and admitted workload are ready; protocol progress is observed separately",
-		)
+		if err := r.observeStacksProtocol(ctx, &currentRoot, &p, pod, &state); err != nil && state.Protocol != nil {
+			state.Protocol.Available = false
+			state.Protocol.Reason = api.ReasonObservationUnavailable
+		}
+		result, err := finish(metav1.ConditionTrue, reasonReady, readyMessage)
+		if err == nil {
+			r.converged.record(request.NamespacedName, epoch, convergedPass(&currentRoot, &p, &state))
+		}
+		return result, err
 	}
 	return finish(metav1.ConditionFalse, api.ReasonPending, "Waiting for the admitted actor and RPC readiness probe")
 }
@@ -456,14 +466,7 @@ func selected(root *api.StacksNetwork, p *api.StacksNetworkParticipant) bool {
 
 // authorized verifies current lifecycle, admission and published genesis identities.
 func (r *Reconciler) authorized(ctx context.Context, root *api.StacksNetwork, p *api.StacksNetworkParticipant) error {
-	if root.UID != p.Spec.NetworkUID || root.DeletionTimestamp != nil ||
-		root.Spec.Operation == api.NetworkOperationStopped ||
-		(root.Status.Phase == api.NetworkPhaseFailed ||
-			meta.IsStatusConditionTrue(
-				root.Status.Conditions,
-				api.ConditionFailed,
-			)) ||
-		p.DeletionTimestamp != nil {
+	if lifecycleWithdrawn(root, p) {
 		return fmt.Errorf("network lifecycle withdraws actor activation")
 	}
 	if err := foundation.ValidateParticipantAdmission(ctx, r.Reader, root, p); err != nil {
@@ -493,6 +496,15 @@ func (r *Reconciler) authorized(ctx context.Context, root *api.StacksNetwork, p 
 	return nil
 }
 
+// lifecycleWithdrawn reports network or participant lifecycle that forbids actor activation.
+func lifecycleWithdrawn(root *api.StacksNetwork, p *api.StacksNetworkParticipant) bool {
+	return root.UID != p.Spec.NetworkUID || root.DeletionTimestamp != nil ||
+		root.Spec.Operation == api.NetworkOperationStopped ||
+		root.Status.Phase == api.NetworkPhaseFailed ||
+		meta.IsStatusConditionTrue(root.Status.Conditions, api.ConditionFailed) ||
+		p.DeletionTimestamp != nil
+}
+
 // ownConditions selects only the domain condition entries.
 func ownConditions(conditions []metav1.Condition) []metav1.Condition {
 	var result []metav1.Condition
@@ -512,6 +524,9 @@ func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 	}
 	if r.Reader == nil {
 		r.Reader = manager.GetAPIReader()
+	}
+	if r.converged == nil {
+		r.converged = &convergenceMemory{}
 	}
 	participantChanges := predicate.Funcs{UpdateFunc: func(e event.UpdateEvent) bool {
 		old, oldOK := e.ObjectOld.(*api.StacksNetworkParticipant)
@@ -538,7 +553,7 @@ func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 				meta.FindStatusCondition(current.Status.Conditions, api.ConditionFailed),
 			)
 	}}
-	rootMap := handler.EnqueueRequestsFromMapFunc(func(_ context.Context, object client.Object) []reconcile.Request {
+	rootMap := r.routed(func(_ context.Context, object client.Object) []reconcile.Request {
 		root, ok := object.(*api.StacksNetwork)
 		if !ok {
 			return nil
@@ -557,7 +572,7 @@ func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 		}
 		return requests
 	})
-	podMap := handler.EnqueueRequestsFromMapFunc(func(_ context.Context, object client.Object) []reconcile.Request {
+	podMap := r.routed(func(_ context.Context, object client.Object) []reconcile.Request {
 		labels := object.GetLabels()
 		if labels[api.LabelParticipantKind] != string(r.kind()) {
 			return nil
@@ -574,15 +589,15 @@ func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 	registration := ctrl.NewControllerManagedBy(manager).
 		Named("participant-"+strings.ToLower(string(r.kind()))+"-workload").
 		WithOptions(controller.Options{MaxConcurrentReconciles: actorWorkers}).
-		For(&api.StacksNetworkParticipant{}, builder.WithPredicates(participantChanges)).
-		Owns(&appsv1.StatefulSet{}).
-		Owns(&corev1.Service{}).
-		Owns(&corev1.ConfigMap{}).
-		Owns(&batchv1.Job{}).
+		Watches(&api.StacksNetworkParticipant{}, r.routed(self), builder.WithPredicates(participantChanges)).
+		Watches(&appsv1.StatefulSet{}, r.routed(controllingParticipant)).
+		Watches(&corev1.Service{}, r.routed(controllingParticipant)).
+		Watches(&corev1.ConfigMap{}, r.routed(controllingParticipant)).
+		Watches(&batchv1.Job{}, r.routed(controllingParticipant)).
 		Watches(&corev1.Pod{}, podMap).
 		Watches(&api.StacksNetwork{}, rootMap, builder.WithPredicates(rootChanges))
 	if r.kind() != api.ParticipantBitcoinNode {
-		dependencies := handler.EnqueueRequestsFromMapFunc(
+		dependencies := r.routed(
 			func(ctx context.Context, object client.Object) []reconcile.Request {
 				// Routing only selects candidates; each reconcile re-reads admitted identity uncached.
 				var participants api.StacksNetworkParticipantList

@@ -148,7 +148,14 @@ at once: a full pass over all nodes must finish within the 16 s window. Their Bi
 record watches route through the cache and ignore observation refreshes and scheduler
 progress; actors waiting on Bitcoin preparation retry every 5 s, so an observation that
 becomes fresh again without changing still releases them. Controls, admission and process identity
-changes still trigger immediate reconciliation. Generated Stacks nodes use a
+changes still trigger immediate reconciliation.
+
+A ready Stacks node's 2 s poll only observes protocol while its last full pass still holds:
+the same participant generation, admission and published runtime, network generation and
+genesis, and a ready actor Pod with the same UID, container and digests. Any watched change
+(the participant, its owned resources, its Pod, the network or a dependency) discards that
+pass, as does age over 30 s, which bounds repair of unwatched inputs such as Secrets. The
+next pass then converges the workload again. Generated Stacks nodes use a
 500 ms idle miner initiative threshold for the accelerated regtest profile;
 Core's event loop does not guarantee a wakeup every 500 ms.
 
