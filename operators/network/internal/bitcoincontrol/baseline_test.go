@@ -234,13 +234,14 @@ func TestBaselineLostSelectionAndAssignmentAcknowledgements(t *testing.T) {
 					}
 					return err
 				},
-				Update: func(
+				Patch: func(
 					ctx context.Context,
 					c client.WithWatch,
 					obj client.Object,
-					opts ...client.UpdateOption,
+					patch client.Patch,
+					opts ...client.PatchOption,
 				) error {
-					err := c.Update(ctx, obj, opts...)
+					err := c.Patch(ctx, obj, patch, opts...)
 					if _, ok := obj.(*bitcoin.BitcoinExecution); ok && err == nil && !lost && boundary == "assignment" {
 						lost = true
 						return errors.New("assignment response lost")

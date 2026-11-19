@@ -330,8 +330,7 @@ func (s *Scheduler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.R
 		s.Now().Before(offer.ExpiresAt.Time) && offer.ExpectedHeight == height && offer.ExpectedTip == tip &&
 		offer.PolicyDigest == production.Status.Admission.PolicyDigest && offer.Production == currentBinding {
 		if !equality.Semantic.DeepEqual(target.Spec.Offer, offer) {
-			target.Spec.Offer = offer.DeepCopy()
-			if e := s.Client.Update(ctx, target); e != nil {
+			if e := assignOffer(ctx, s.Client, target, offer); e != nil {
 				return ctrl.Result{}, e
 			}
 		}

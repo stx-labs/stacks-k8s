@@ -215,8 +215,7 @@ func (s *Scheduler) reconcileBaseline(
 			return report(bitcoin.InitializationBlocked, reasonCommittedOfferUnavailable)
 		}
 		if !equality.Semantic.DeepEqual(target.Spec.Offer, record.Status.Offer) {
-			target.Spec.Offer = record.Status.Offer.DeepCopy()
-			if err := s.Client.Update(ctx, target); err != nil {
+			if err := assignOffer(ctx, s.Client, target, record.Status.Offer); err != nil {
 				return ctrl.Result{}, err
 			}
 		}

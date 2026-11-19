@@ -67,6 +67,15 @@ func bootstrapAPIFixture(t *testing.T) *testFixture {
 			}
 			return c.Update(ctx, obj, opts...)
 		},
+		Patch: func(
+			ctx context.Context, c client.WithWatch, obj client.Object,
+			patch client.Patch, opts ...client.PatchOption,
+		) error {
+			if isRecord(obj) {
+				return apiClient.Patch(ctx, obj, patch, opts...)
+			}
+			return c.Patch(ctx, obj, patch, opts...)
+		},
 		SubResourceUpdate: func(
 			ctx context.Context, c client.Client, sub string, obj client.Object,
 			opts ...client.SubResourceUpdateOption,
