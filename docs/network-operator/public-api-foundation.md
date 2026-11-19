@@ -145,8 +145,9 @@ Worker watches ignore execution heartbeats and native observation-only updates;
 protocol polling remains timer-driven. Actor workload controllers reconcile up to 8
 participants concurrently, because prepared-set gates need every Stacks node's poll fresh
 at once: a full pass over all nodes must finish within the 16 s window. Their Bitcoin
-record watches route through the cache and ignore observation refreshes and scheduler
-progress; actors waiting on Bitcoin preparation retry every 5 s, so an observation that
+record watches route through the cache and react only to what miner activation reads
+(record identity, the observed process and wallet readiness or first maturity), not to
+per-block offers, receipts, heights or scheduler progress; actors waiting on Bitcoin preparation retry every 5 s, so an observation that
 becomes fresh again without changing still releases them. Controls, admission and process identity
 changes still trigger immediate reconciliation.
 

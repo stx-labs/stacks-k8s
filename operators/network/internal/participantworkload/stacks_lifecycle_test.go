@@ -343,8 +343,23 @@ func TestStacksStartDependencyChangedIgnoresRefreshesAndSchedulerProgress(t *tes
 		{"observation refresh", execution, func(o client.Object) {
 			o.(*bitcoin.BitcoinExecution).Status.Observation.ObservedAt = metav1.NewTime(now.Add(time.Second))
 		}, false},
-		{"wallet maturity", execution, func(o client.Object) {
+		{"later maturity", execution, func(o client.Object) {
 			o.(*bitcoin.BitcoinExecution).Status.Observation.Wallets[0].MatureOutputs = 2
+		}, false},
+		{"first maturity", execution, func(o client.Object) {
+			o.(*bitcoin.BitcoinExecution).Status.Observation.Wallets[0].MatureOutputs = 0
+		}, true},
+		{"block progress", execution, func(o client.Object) {
+			record := o.(*bitcoin.BitcoinExecution)
+			record.Status.Observation.Height++
+			record.Status.BlocksGenerated++
+			record.Spec.Offer = &bitcoin.BitcoinBlockOffer{Number: 9}
+		}, false},
+		{"wallet readiness", execution, func(o client.Object) {
+			o.(*bitcoin.BitcoinExecution).Status.Observation.Wallets[0].Ready = false
+		}, true},
+		{"observed process", execution, func(o client.Object) {
+			o.(*bitcoin.BitcoinExecution).Status.Observation.Target.ContainerID = "restarted"
 		}, true},
 		{"execution replaced", execution, func(o client.Object) { o.SetUID("replacement") }, true},
 		{"execution owner", execution, func(o client.Object) { o.SetOwnerReferences(nil) }, true},

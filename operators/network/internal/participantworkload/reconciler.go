@@ -19,6 +19,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -673,8 +674,8 @@ func retriesUnwatched(reason string) bool {
 }
 
 // stacksStartDependencyChanged keeps Bitcoin record changes that stacksStartAuthorized can observe,
-// omitting observation refreshes and scheduler progress. Freshness recovery relies on the
-// PrepareBitcoinUnavailable retry instead.
+// omitting per-block offers, receipts, heights, observation refreshes and scheduler progress.
+// Freshness recovery relies on the PrepareBitcoinUnavailable retry instead.
 func stacksStartDependencyChanged(old, current client.Object) bool {
 	if old == nil || current == nil || old.GetUID() != current.GetUID() ||
 		!reflect.DeepEqual(old.GetDeletionTimestamp(), current.GetDeletionTimestamp()) ||
@@ -684,13 +685,40 @@ func stacksStartDependencyChanged(old, current client.Object) bool {
 	switch before := old.(type) {
 	case *bitcoin.BitcoinExecution:
 		after, ok := current.(*bitcoin.BitcoinExecution)
-		return !ok || foundation.BitcoinExecutionChanged(before, after)
+		return !ok || !reflect.DeepEqual(stacksStartView(before), stacksStartView(after))
 	case *bitcoin.BitcoinInitialization:
 		after, ok := current.(*bitcoin.BitcoinInitialization)
 		return !ok || !reflect.DeepEqual(before.Spec, after.Spec) ||
 			!reflect.DeepEqual(before.Status.PreparedAt, after.Status.PreparedAt)
 	}
 	return true
+}
+
+// stacksStartWallet is the part of a wallet observation miner activation depends on.
+type stacksStartWallet struct {
+	wallet           common.Binding
+	name, address    string
+	ready, hasMature bool
+}
+
+// stacksStartView is what stacksStartAuthorized reads from an execution record besides metadata.
+func stacksStartView(e *bitcoin.BitcoinExecution) any {
+	view := struct {
+		network     types.UID
+		participant types.UID
+		target      *bitcoin.BitcoinTargetIdentity
+		wallets     []stacksStartWallet
+	}{network: e.Spec.NetworkUID, participant: e.Spec.Participant.UID}
+	if o := e.Status.Observation; o != nil {
+		view.target = &o.Target
+		for _, w := range o.Wallets {
+			view.wallets = append(
+				view.wallets,
+				stacksStartWallet{w.Wallet, w.Name, w.Address, w.Ready, w.MatureOutputs >= 1},
+			)
+		}
+	}
+	return view
 }
 
 // actorRuntimeDependencyChanged excludes protocol telemetry from actor configuration watches.
