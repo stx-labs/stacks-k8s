@@ -101,6 +101,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		state.Protocol.Reason = reasonActorUnavailable
 	}
 	conditions := ownConditions(p.Status.Conditions)
+	// held is the runtime an established placement error was recorded with. Until that Pod
+	// recovers, status keeps reporting it, so no later pass can record a changed workload.
+	var held *api.ParticipantRuntimeStatus
 	finish := func(status metav1.ConditionStatus, reason, message string) (ctrl.Result, error) {
 		meta.SetStatusCondition(
 			&conditions,
@@ -112,7 +115,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 				ObservedGeneration: p.Generation,
 			},
 		)
-		out := api.ParticipantStatus{Runtime: &state, Conditions: conditions}
+		out := api.ParticipantStatus{Runtime: published(&state, held), Conditions: conditions}
 		result := ctrl.Result{}
 		if p.Spec.Kind == api.ParticipantStacksNode && reason == reasonReady {
 			result.RequeueAfter = protocolPollInterval
@@ -226,16 +229,22 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		}
 		state.WorkloadRefs = []common.Binding{objectref.StatefulSet(&existing)}
 	}
-	if condition := meta.FindStatusCondition(
-		conditions,
-		api.ConditionPlacementReady,
-	); condition != nil && condition.Status == metav1.ConditionFalse &&
-		condition.Reason == api.ReasonPlacementError {
+	requiresReplacement := func() (ctrl.Result, error) {
 		return finish(
 			metav1.ConditionFalse,
 			api.ReasonRequiresReplacement,
 			"Established placement failure requires a new participant name",
 		)
+	}
+	if condition := meta.FindStatusCondition(
+		conditions,
+		api.ConditionPlacementReady,
+	); condition != nil && condition.Status == metav1.ConditionFalse &&
+		condition.Reason == api.ReasonPlacementError {
+		if p.Status.Runtime == nil || p.Status.Runtime.PodRef == nil {
+			return requiresReplacement()
+		}
+		held = p.Status.Runtime.DeepCopy()
 	}
 	var ready bool
 	if p.Spec.Kind == api.ParticipantBitcoinNode {
@@ -343,6 +352,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 			return finish(metav1.ConditionFalse, reasonPrepareBitcoinUnavailable, err.Error())
 		}
 	}
+	// Only the unchanged failed workload may recover; any other workload needs a new name.
+	if held != nil && !sameWorkload(held, &state) {
+		return requiresReplacement()
+	}
 	for _, service := range Services(&p) {
 		if err := r.reconcileService(ctx, &p, service); err != nil {
 			return finish(metav1.ConditionFalse, api.ReasonOwnershipConflict, err.Error())
@@ -368,6 +381,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 	}
 	if err != nil {
 		return finish(metav1.ConditionUnknown, reasonRuntimeIdentityUnavailable, err.Error())
+	}
+	if held != nil && heldPlacement(held, pod) == placementReplaced {
+		return requiresReplacement()
 	}
 	observePod(&state, pod)
 	if pod.DeletionTimestamp != nil {
@@ -414,6 +430,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 			placement.Reason = api.ReasonScheduled
 			placement.Message = "Actor Pod scheduling confirmed"
 		}
+	}
+	if held != nil {
+		if heldPlacement(held, pod) != placementRecovered {
+			return finish(
+				metav1.ConditionFalse,
+				api.ReasonPlacementError,
+				"Waiting for the failed actor Pod to schedule",
+			)
+		}
+		held = nil
 	}
 	meta.SetStatusCondition(&conditions, placement)
 	for _, status := range pod.Status.InitContainerStatuses {

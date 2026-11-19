@@ -123,18 +123,19 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 			Message:            "Waiting for scheduler observation",
 			ObservedGeneration: p.Generation,
 		}
-		if previous := meta.FindStatusCondition(
-			p.Status.Conditions,
-			api.ConditionPlacementReady,
-		); previous != nil && previous.Status == metav1.ConditionFalse &&
-			previous.Reason == api.ReasonPlacementError {
-			placement = previous.DeepCopy()
-		} else if pod.Spec.NodeName != "" {
+		// A placement error persists until the Pod schedules; scheduling failures can be transient.
+		if pod.Spec.NodeName != "" {
 			placement.Status,
 				placement.Reason,
 				placement.Message = metav1.ConditionTrue,
 				api.ReasonScheduled,
 				"Worker is scheduled"
+		} else if previous := meta.FindStatusCondition(
+			p.Status.Conditions,
+			api.ConditionPlacementReady,
+		); previous != nil && previous.Status == metav1.ConditionFalse &&
+			previous.Reason == api.ReasonPlacementError {
+			placement = previous.DeepCopy()
 		} else {
 			for _, condition := range pod.Status.Conditions {
 				if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse &&

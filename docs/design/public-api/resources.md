@@ -28,15 +28,20 @@ anti-affinity. workerPlacement.nodeSelector/tolerations apply to support Pods on
 root defaults when omitted.
 
 PodScheduled=False/Unschedulable reports PlacementError with scheduler details, not
-unexplained Pending. Initial scheduling without a scheduler decision is still Pending. Correct
-an established placement error by removing that participant and adding a new name with
-corrected placement, or recreate the network. Do not relocate a bound Stacks worker as a
+unexplained Pending. Initial scheduling without a scheduler decision is still Pending.
+Scheduling failures can be transient (for example a volume claim the scheduler cannot see
+yet), so the same Pod scheduling later clears PlacementError, with no deadline; until then
+status keeps reporting the workload the error was recorded with. Correct a placement error
+that does not clear by removing that participant and adding a new name with corrected
+placement, or recreate the network. Do not relocate a bound Stacks worker as a
 repair. A provably never-activated worker can be destroyed without a shutdown acknowledgement;
 an uncertain activation is not proof it never ran. This is the selected experiment
 policy for established PlacementError, including actors and never-activated workers;
 it is not a Kubernetes inability to edit their placement. After established PlacementError,
-the controller does not apply placement changes to that participant's workload and
-reports RequiresReplacement; this is reconciliation enforcement, not admission rejection.
+the controller does not apply placement or other workload changes to that participant's
+actor: a changed admitted policy or configuration, or a different Pod, reports
+RequiresReplacement; this is reconciliation enforcement, not admission rejection. Stop,
+suspension and removal still apply.
 Intentional placement updates
 on an operating actor with no PlacementError follow its supported roll rules.
 Retrying a lost/uncertain inactive-candidate create does not correct placement or

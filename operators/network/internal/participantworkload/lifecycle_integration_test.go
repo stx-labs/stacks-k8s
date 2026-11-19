@@ -274,11 +274,16 @@ func TestActorAPILifecycleAndStatusIsolation(t *testing.T) {
 	}
 }
 
-// verifyShutdownReconcile tests durable termination and finalizer release through the public reconciler.
+// verifyShutdownReconcile tests durable termination and finalizer release through the public
+// reconciler, also while an established placement error holds the actor.
 func verifyShutdownReconcile(t *testing.T, ctx context.Context, c client.Client) {
 	for _, kind := range []api.ParticipantKind{"BitcoinNode", "StacksNode", "StacksSigner"} {
-		for _, mode := range []string{"remove", "stop", "suspend", "missing-workload"} {
+		for _, mode := range []string{
+			"remove", "stop", "suspend", "missing-workload", "remove-placement", "stop-placement", "suspend-placement",
+		} {
 			t.Run(string(kind)+"-"+mode, func(t *testing.T) {
+				placementFailed := strings.HasSuffix(mode, "-placement")
+				mode := strings.TrimSuffix(mode, "-placement")
 				must := func(err error) {
 					t.Helper()
 					if err != nil {
@@ -290,6 +295,9 @@ func verifyShutdownReconcile(t *testing.T, ctx context.Context, c client.Client)
 					p = stacksParticipantFixture(kind)
 				}
 				p.Namespace = strings.ToLower(string(kind)) + "-" + mode
+				if placementFailed {
+					p.Namespace += "-placement"
+				}
 				must(c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: p.Namespace}}))
 				admission := p.Status.Admission
 				root := &api.StacksNetwork{
@@ -364,7 +372,26 @@ func verifyShutdownReconcile(t *testing.T, ctx context.Context, c client.Client)
 					PodRef:             binding("Pod", pod),
 					WorkloadRefs:       []common.Binding{*binding("StatefulSet", workload)},
 				}
-				must(participantstatus.Apply(ctx, c, p, api.ParticipantStatus{Runtime: state}, r.fieldManager()))
+				owned := api.ParticipantStatus{Runtime: state}
+				if placementFailed {
+					owned.Conditions = []metav1.Condition{
+						{
+							Type:               "PlacementReady",
+							Status:             metav1.ConditionFalse,
+							Reason:             "PlacementError",
+							Message:            "0/5 nodes are available",
+							LastTransitionTime: metav1.Now(),
+						},
+						{
+							Type:               "WorkloadReady",
+							Status:             metav1.ConditionFalse,
+							Reason:             "PlacementError",
+							Message:            "0/5 nodes are available",
+							LastTransitionTime: metav1.Now(),
+						},
+					}
+				}
+				must(participantstatus.Apply(ctx, c, p, owned, r.fieldManager()))
 				// Envtest has no kubelet or GC: explicitly delete the never-scheduled Pod.
 				must(c.Delete(ctx, pod))
 				removing := mode == "remove" || mode == "missing-workload"
