@@ -319,19 +319,31 @@ func TestProtocolObservationRejectsSameNamePodReplacementWithoutFreshening(t *te
 	}
 }
 
-func TestPoXUnreadableAtTipRequiresAStable404(t *testing.T) {
+func TestPoXUnreadableAtTipRequiresAStable404Or500(t *testing.T) {
 	view := rpc.ChainView{Info: rpc.Info{NetworkID: 0x80000000, BurnHeight: 240, StacksHeight: 30}}
 	changed := view
 	changed.BurnHeight = 241
-	for name, node := range map[string]*nativeObservationFixture{
-		"server error":     {view: view, poxErr: &rpc.StatusError{Code: http.StatusInternalServerError}},
-		"transport":        {view: view, poxErr: fmt.Errorf("native RPC transport unavailable")},
-		"deadline":         {view: view, poxErr: context.DeadlineExceeded},
-		"tip moved":        {view: view, after: &changed, poxErr: &rpc.StatusError{Code: http.StatusNotFound}},
-		"stable 404 (tip)": {view: view, poxErr: &rpc.StatusError{Code: http.StatusNotFound}},
+	notFound := &rpc.StatusError{Code: http.StatusNotFound}
+	serverError := &rpc.StatusError{Code: http.StatusInternalServerError}
+	for name, c := range map[string]struct {
+		poxErr     error
+		tipMoved   bool
+		unreadable bool
+	}{
+		"stable 404":    {poxErr: notFound, unreadable: true},
+		"stable 500":    {poxErr: serverError, unreadable: true},
+		"stable 503":    {poxErr: &rpc.StatusError{Code: http.StatusServiceUnavailable}},
+		"transport":     {poxErr: fmt.Errorf("native RPC transport unavailable")},
+		"deadline":      {poxErr: context.DeadlineExceeded},
+		"404 tip moved": {poxErr: notFound, tipMoved: true},
+		"500 tip moved": {poxErr: serverError, tipMoved: true},
 	} {
+		node := &nativeObservationFixture{view: view, poxErr: c.poxErr}
+		if c.tipMoved {
+			node.after = &changed
+		}
 		_, err := collectStacksProtocol(context.Background(), node, nil, nil, time.Now())
-		if err == nil || errors.Is(err, errPoXUnreadableAtTip) != (name == "stable 404 (tip)") {
+		if err == nil || errors.Is(err, errPoXUnreadableAtTip) != c.unreadable {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
@@ -349,15 +361,21 @@ func TestPoXUnreadableAtTipKeepsTheLastSuccessfulObservation(t *testing.T) {
 		return r.observeStacksProtocol(ctx, f.root, f.p, f.pod, f.state)
 	}
 	notFound := &rpc.StatusError{Code: http.StatusNotFound}
+	for _, code := range []int{http.StatusNotFound, http.StatusInternalServerError} {
+		f := newProtocolTarget()
+		want := f.state.Protocol.DeepCopy()
+		want.Available, want.Reason = false, reasonPoXUnreadableAtTip
+		if err := observe(t, f, f.pod, &rpc.StatusError{Code: code}); err != nil {
+			t.Fatalf("HTTP %d: a confirmed process with unreadable PoX failed the observation: %v", code, err)
+		}
+		if !reflect.DeepEqual(f.state.Protocol, want) {
+			t.Fatalf("HTTP %d: diagnostic changed retained evidence: %+v", code, f.state.Protocol)
+		}
+	}
 
 	f := newProtocolTarget()
-	want := f.state.Protocol.DeepCopy()
-	want.Available, want.Reason = false, reasonPoXUnreadableAtTip
-	if err := observe(t, f, f.pod, notFound); err != nil {
-		t.Fatalf("a confirmed process with unreadable PoX failed the observation: %v", err)
-	}
-	if !reflect.DeepEqual(f.state.Protocol, want) {
-		t.Fatalf("diagnostic changed retained evidence: %+v", f.state.Protocol)
+	if err := observe(t, f, f.pod, &rpc.StatusError{Code: http.StatusInternalServerError}); err != nil {
+		t.Fatal(err)
 	}
 	if err := observe(t, f, f.pod, nil); err != nil {
 		t.Fatal(err)
@@ -375,9 +393,10 @@ func TestPoXUnreadableAtTipKeepsTheLastSuccessfulObservation(t *testing.T) {
 		pod *corev1.Pod
 		err error
 	}{
-		"server error":     {replaced.pod, &rpc.StatusError{Code: http.StatusInternalServerError}},
-		"deadline":         {replaced.pod, context.DeadlineExceeded},
-		"replaced process": {current, notFound},
+		"unavailable":          {replaced.pod, &rpc.StatusError{Code: http.StatusServiceUnavailable}},
+		"deadline":             {replaced.pod, context.DeadlineExceeded},
+		"replaced process 404": {current, notFound},
+		"replaced process 500": {current, &rpc.StatusError{Code: http.StatusInternalServerError}},
 	} {
 		f := newProtocolTarget()
 		want := f.state.Protocol.DeepCopy()

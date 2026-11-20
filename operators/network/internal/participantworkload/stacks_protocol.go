@@ -26,9 +26,10 @@ var (
 	protocolHeartbeatInterval = time.Duration(foundation.ObservationPolicy().HeartbeatIntervalSeconds) * time.Second
 )
 
-// errPoXUnreadableAtTip is a 404 PoX read at the node's own canonical tip, unchanged across the
-// read. Core selects the PoX contract by its Bitcoin tip but evaluates it at its Stacks tip, so
-// this occurs while the Stacks tip predates that contract, e.g. across closely spaced epochs.
+// errPoXUnreadableAtTip is a PoX read answered with HTTP 404 or 500 at the node's own canonical
+// tip, unchanged across the read. It locates the failure, not its cause: Core answers 404 while
+// its Stacks tip predates the PoX contract its Bitcoin tip selects, and 500 when it cannot
+// compute PoX info, e.g. its PoX-1 to PoX-3 rejection-vote arithmetic overflowing on regtest.
 var errPoXUnreadableAtTip = errors.New("PoX unreadable at the canonical Stacks tip")
 
 // StacksProtocolRPC exposes only bounded native protocol observations.
@@ -152,7 +153,7 @@ func collectStacksProtocol(
 // poxFailure distinguishes errPoXUnreadableAtTip from other failed PoX reads.
 func poxFailure(ctx context.Context, node StacksProtocolRPC, before rpc.ChainView, err error) error {
 	var status *rpc.StatusError
-	if !errors.As(err, &status) || status.Code != http.StatusNotFound {
+	if !errors.As(err, &status) || status.Code != http.StatusNotFound && status.Code != http.StatusInternalServerError {
 		return err
 	}
 	after, err := node.ChainView(ctx)
