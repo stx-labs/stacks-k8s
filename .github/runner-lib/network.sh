@@ -11,7 +11,8 @@
 # INIT_TIMEOUT initialization (default 1200s: about twice a single runner's ~600s for the
 # minimal example), both in seconds. RESOLVE_ONLY=true disposes right after resolution.
 # HOLD_SECONDS (default 0) keeps the network up for live inspection before teardown, also
-# after a failure; creating HOLD_RELEASE ends the hold early.
+# after a failure; creating HOLD_RELEASE ends the hold early. BITCOIN_OVERRIDES (a JSON object)
+# becomes config.overrides of every BitcoinNode, whose example must not configure one itself.
 set -euo pipefail
 EXAMPLE=$1 KCFG=$2 CTX=$3 OUT=$4
 RESOLVE_ONLY=${RESOLVE_ONLY:-false}
@@ -165,6 +166,17 @@ collect() {
   kn get "$(k api-resources --namespaced --verbs=list -o name | grep '\.stacks\.org$' | paste -sd, -)" \
     -o yaml > "$OUT/resources.yaml" 2>&1 || true
   kn get events --sort-by=.lastTimestamp > "$OUT/events.txt" 2>&1 || true
+  # Each Bitcoin node's peers with direction and P2P permissions, read with its control credentials.
+  for pod in $(kn get pods -o name 2>/dev/null | grep -E 'bitcoinnode-.+-actor-'); do
+    prefix=${pod#pod/} prefix=${prefix%-actor-*}
+    secret=$(kn get secrets -o name 2>/dev/null | grep -m1 "/$prefix-rpc-c") || continue
+    user=$(kn get "$secret" -o jsonpath='{.data.username}' | base64 -d) || continue
+    pass=$(kn get "$secret" -o jsonpath='{.data.password}' | base64 -d) || continue
+    echo "# ${prefix##*-bitcoinnode-}"
+    kn exec "${pod#pod/}" -c bitcoin -- bitcoin-cli -regtest -rpcconnect=127.0.0.1 -rpcport=18443 \
+      -rpcuser="$user" -rpcpassword="$pass" getpeerinfo 2>&1 |
+      jq -r '.[] | "\(.addr) \(.connection_type) permissions=\(.permissions | join(","))"' 2>&1 || true
+  done > "$OUT/bitcoin-peers.txt"
   # Complete logs (k3s-node.sh raises kubelet rotation so the current file holds them).
   for pod in $(kn get pods -o name 2>/dev/null); do
     { kn logs "$pod" --all-containers --prefix 2>&1 || true; } | gzip > "$OUT/logs/${pod#pod/}.log.gz"
@@ -268,7 +280,14 @@ awk -v workers="$WORKER_NODES" -v workers2="$WORKER2_NODES" -v control="$NODE_CO
   /hostname: stacks-k8s-worker$/ { sub(/stacks-k8s-worker$/, w[i++ % n + 1]) }
   /hostname: stacks-k8s-worker2$/ { sub(/stacks-k8s-worker2$/, w2[j++ % n2 + 1]) }
   /hostname: stacks-k8s-control-plane$/ { sub(/stacks-k8s-control-plane$/, control) }
-  { print }' "$EXAMPLE" > "$OUT/network-manifest.yaml"
+  /^---/ { kind = "" }
+  /^kind: / { kind = $2 }
+  kind == "BitcoinNode" && overrides != "" && /^  config:/ {
+    print "BITCOIN_OVERRIDES: the example already configures a BitcoinNode" > "/dev/stderr"; exit 1
+  }
+  { print }
+  kind == "BitcoinNode" && overrides != "" && /^spec:$/ { print "  config:\n    overrides: " overrides }
+  ' overrides="${BITCOIN_OVERRIDES:-}" "$EXAMPLE" > "$OUT/network-manifest.yaml"
 
 requests > "$OUT/requests-before.txt"
 applied_at="$(date -u +%FT%TZ)"

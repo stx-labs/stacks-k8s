@@ -55,6 +55,13 @@ on:
         description: images mode only; commit whose revert from HEAD builds the base image
         type: string
         default: ''
+      bitcoin_relay:
+        description: >-
+          fast grants every Bitcoin node noban for pod-network peers in both directions, skipping
+          Core's transaction relay delays, and logs mempool acceptance; for trusted bootstrap only
+        type: choice
+        options: [default, fast]
+        default: default
 
 permissions:
   contents: read
@@ -74,6 +81,9 @@ env:
   HOLD_MINUTES: ${{ inputs.hold || '0' }}
   HOLD_RELEASE: /tmp/stacks-k8s-release
   BASE_REVERT: ${{ inputs.mode == 'images' && inputs.base_revert || '' }}
+  BITCOIN_OVERRIDES: >-
+    ${{ inputs.bitcoin_relay == 'fast'
+    && '{"whitelist":["in,out,noban@10.0.0.0/8"],"debug":["mempool"],"logtimemicros":1}' || '' }}
   ROUNDS_UNTIL: ${{ (inputs.mode == 'placement' || inputs.mode == 'images') && inputs.rounds_until || 'resolved' }}
 
 jobs:
