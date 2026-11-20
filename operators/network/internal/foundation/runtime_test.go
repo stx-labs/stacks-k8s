@@ -160,6 +160,75 @@ func TestRuntimeRequestsNeverRebuildTopology(t *testing.T) {
 	}
 }
 
+func TestRuntimeConditionTransitionsFollowPersistedStatus(t *testing.T) {
+	root, c := runtimeFixture(t)
+	ctx := context.Background()
+	since := metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	failure := errors.New("observation unavailable")
+	var final metav1.Condition
+	var fail error
+	r := &Reconciler{
+		Client: c,
+		Reader: c,
+		Runtime: runtimeFunc(func(_ context.Context, current *api.StacksNetwork) (ctrl.Result, error) {
+			// Like the network runtime, reset to a default before projecting the final result.
+			meta.SetStatusCondition(&current.Status.Conditions, metav1.Condition{
+				Type: api.ConditionOperational, Status: metav1.ConditionFalse, Reason: "Initializing",
+			})
+			meta.SetStatusCondition(&current.Status.Conditions, final)
+			return ctrl.Result{}, fail
+		}),
+	}
+	request := networkRequest{key: client.ObjectKeyFromObject(root), runtimeOnly: true}
+	pass := func(condition metav1.Condition, err error) metav1.Condition {
+		t.Helper()
+		final, fail = condition, err
+		if _, got := r.reconcileRequest(ctx, request); !errors.Is(got, err) {
+			t.Fatalf("runtime error changed: %v", got)
+		}
+		var current api.StacksNetwork
+		if err := c.Get(ctx, request.key, &current); err != nil {
+			t.Fatal(err)
+		}
+		return *meta.FindStatusCondition(current.Status.Conditions, api.ConditionOperational)
+	}
+	healthy := metav1.Condition{
+		Type:               api.ConditionOperational,
+		Status:             metav1.ConditionTrue,
+		Reason:             "BaselineProgressObserved",
+		LastTransitionTime: since,
+	}
+	if got := pass(healthy, nil); !got.LastTransitionTime.Equal(&since) || c.statusWrites != 1 {
+		t.Fatalf("new condition: %+v writes=%d", got, c.statusWrites)
+	}
+	healthy.LastTransitionTime = metav1.Time{}
+	for i := 0; i < 3; i++ {
+		if got := pass(healthy, nil); !got.LastTransitionTime.Equal(&since) || c.statusWrites != 1 {
+			t.Fatalf("unchanged status rewrote its transition: %+v writes=%d", got, c.statusWrites)
+		}
+	}
+	healthy.Reason, healthy.Message, healthy.ObservedGeneration = "Other", "changed", 2
+	if got := pass(healthy, nil); !got.LastTransitionTime.Equal(&since) || got.Reason != "Other" ||
+		c.statusWrites != 2 {
+		t.Fatalf("reason update reset the transition or was not published: %+v writes=%d", got, c.statusWrites)
+	}
+	unknown := pass(metav1.Condition{
+		Type: api.ConditionOperational, Status: metav1.ConditionUnknown, Reason: "ObservationUnavailable",
+	}, failure)
+	if unknown.LastTransitionTime.Equal(&since) || c.statusWrites != 3 {
+		t.Fatalf("failed pass did not record its transition: %+v writes=%d", unknown, c.statusWrites)
+	}
+	if got := pass(unknown, failure); !got.LastTransitionTime.Equal(&unknown.LastTransitionTime) ||
+		c.statusWrites != 3 {
+		t.Fatalf("repeated failure rewrote its transition: %+v writes=%d", got, c.statusWrites)
+	}
+	healthy.LastTransitionTime = metav1.Time{}
+	if got := pass(healthy, nil); got.Status != metav1.ConditionTrue || got.LastTransitionTime.Equal(&since) ||
+		got.LastTransitionTime.Before(&unknown.LastTransitionTime) || c.statusWrites != 4 {
+		t.Fatalf("recovery did not record a new transition: %+v writes=%d", got, c.statusWrites)
+	}
+}
+
 func TestRuntimeFailureCannotReplaceTopologyRetry(t *testing.T) {
 	root, c := runtimeFixture(t)
 	failure := errors.New("observation unavailable")

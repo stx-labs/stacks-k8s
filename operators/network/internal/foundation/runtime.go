@@ -73,6 +73,7 @@ func (r *Reconciler) reconcileRuntime(ctx context.Context, request ctrl.Request)
 		!meta.IsStatusConditionTrue(root.Status.Conditions, api.ConditionFailed) {
 		root.Status.Phase = api.NetworkPhaseFailed
 	}
+	keepTransitionTimes(base.Status.Conditions, root.Status.Conditions)
 	if !reflect.DeepEqual(base.Status, root.Status) {
 		err = errors.Join(
 			err,
@@ -81,4 +82,15 @@ func (r *Reconciler) reconcileRuntime(ctx context.Context, request ctrl.Request)
 		)
 	}
 	return operation, err
+}
+
+// keepTransitionTimes restores the persisted transition time of each condition whose final
+// status is unchanged: assignments made and reverted within one pass are not transitions.
+func keepTransitionTimes(persisted, conditions []metav1.Condition) {
+	for i := range conditions {
+		if previous := meta.FindStatusCondition(persisted, conditions[i].Type); previous != nil &&
+			previous.Status == conditions[i].Status {
+			conditions[i].LastTransitionTime = previous.LastTransitionTime
+		}
+	}
 }
