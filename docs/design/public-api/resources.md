@@ -832,9 +832,9 @@ metadata:
   name: steady-blocks
   namespace: lab-30
 spec:
-  cadences:                 # fast bootstrap until epoch 4.0 activates at 282
+  cadences:                 # fast bootstrap until the final gate ceiling (299)
     - {fromHeight: 0, cadence: {mode: Fixed, interval: 5s}}
-    - {fromHeight: 282, cadence: {mode: Fixed, interval: 60s}}
+    - {fromHeight: 300, cadence: {mode: Fixed, interval: 60s}}
 ---
 apiVersion: bitcoin.stacks.org/v1alpha2
 kind: BitcoinBlockProduction

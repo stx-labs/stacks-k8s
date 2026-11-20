@@ -895,7 +895,7 @@ spec:
     cadence:
       mode: Fixed
       interval: 5s
-  - fromHeight: 282
+  - fromHeight: 300
     cadence:
       mode: Fixed
       interval: 60s

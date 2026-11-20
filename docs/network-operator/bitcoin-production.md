@@ -13,16 +13,16 @@ production, select cadences by Bitcoin height instead:
 spec:
   cadences:
     - {fromHeight: 0, cadence: {mode: Fixed, interval: 5s}}
-    - {fromHeight: 282, cadence: {mode: Fixed, interval: 60s}}
+    - {fromHeight: 300, cadence: {mode: Fixed, interval: 60s}}
 ```
 
 The entry with the greatest `fromHeight` not above the freshly observed tip times the
 next opportunity; entry order is not significant. Choose the boundary from the epoch
-schedule (282 is the example's epoch 4.0 activation). Crossing a boundary in either
-direction, including a reorganization, re-anchors the timer once at the new cadence
-without catch-up; an opportunity already being committed or sent is kept. Selection is
-independent of initialization progress, so a stalled bootstrap cannot keep production
-accelerated. An active override supplies one cadence at every height.
+schedule and bootstrap gates (300 follows the example's final gate ceiling). Crossing a
+boundary in either direction, including a reorganization, re-anchors the timer once at
+the new cadence without catch-up; an opportunity already being committed or sent is
+kept. Selection is independent of initialization progress, so a stalled bootstrap cannot
+keep production accelerated. An active override supplies one cadence at every height.
 `status.scheduling.cadence` and `status.cadence` on the initialization record report the
 selection that set the current anchor; liveness uses its progress window.
 
