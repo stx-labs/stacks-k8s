@@ -331,8 +331,10 @@ func (s *Scheduler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.R
 		!target.Status.Observation.ObservedAt.After(receipt.ReceivedAt.Time) {
 		return report(bitcoin.InitializationWaiting, reasonAwaitingPostReceiptObservation)
 	}
+	// A gate completed below its ceiling invalidates the offer; override changes already withdraw it.
 	if offer := record.Status.Offer; offer != nil && offer.Number > record.Status.LastAccountedOffer &&
 		s.Now().Before(offer.ExpiresAt.Time) && offer.ExpectedHeight == height && offer.ExpectedTip == tip &&
+		offer.Ceiling == authority.gate.BitcoinCeiling &&
 		offer.PolicyDigest == production.Status.Admission.PolicyDigest && offer.Production == currentBinding {
 		if !equality.Semantic.DeepEqual(target.Spec.Offer, offer) {
 			if e := assignOffer(ctx, s.Client, target, offer); e != nil {

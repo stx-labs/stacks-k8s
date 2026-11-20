@@ -59,8 +59,9 @@ Before initialization completes, an unconsumed generation offer remains valid fo
 the greater of the sampled cadence interval and 30 seconds. Cadence controls when
 a new offer may be selected; it is not the bootstrap worker admission deadline.
 A missed tick does not replace an unexpired offer or accumulate catch-up work.
-Fresh converged height/tip changes or current production identity/policy changes
-replace unsent stale offers subject to cadence, without waiting for their expiry.
+Fresh converged height/tip changes, current production identity/policy changes, or
+a gate completing below its ceiling replace unsent stale offers subject to cadence,
+without waiting for their expiry.
 Workers still check current policy, pause, exact target and chain identity, and
 the frozen gate ceiling before sending. Expiry does not cancel an Armed RPC.
 A control worker logs each distinct refusal of a pending offer once, with the offer

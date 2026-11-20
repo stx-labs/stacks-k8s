@@ -3,6 +3,7 @@ package bitcoincontrol
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -154,6 +155,45 @@ func TestDynamicGateAuthorityRejectsSkippedOrChangedRequirements(t *testing.T) {
 	}
 }
 
+// setGates freezes gates into the genesis and authorizes gates[index] after completing earlier ones.
+func setGates(t *testing.T, f *testFixture, gates []api.Gate, index int32) {
+	t.Helper()
+	ctx := context.Background()
+	var genesis api.StacksGenesis
+	if err := f.c.Get(ctx, client.ObjectKey{Namespace: "test", Name: "genesis"}, &genesis); err != nil {
+		t.Fatal(err)
+	}
+	genesis.Spec.Bootstrap.Gates = gates
+	if err := f.c.Update(ctx, &genesis); err != nil {
+		t.Fatal(err)
+	}
+	ref := binding("StacksGenesis", &genesis)
+	ref.Fingerprint = foundation.Digest(genesis.Spec)
+	initial := f.readInitial(t)
+	initial.Spec.Genesis = ref
+	if err := f.c.Update(ctx, initial); err != nil {
+		t.Fatal(err)
+	}
+	root := &api.StacksNetwork{}
+	if err := f.c.Get(ctx, client.ObjectKeyFromObject(f.root), root); err != nil {
+		t.Fatal(err)
+	}
+	root.Status.GenesisRef = &ref
+	state := root.Status.Initialization
+	state.GateIndex, state.AuthorizedCeiling, state.Gates = index, gates[index].BitcoinCeiling, nil
+	for i, gate := range gates {
+		observation := api.GateObservation{Name: gate.Name}
+		if int32(i) < index {
+			observation.CompletedAt = ptr.To(metav1.NewTime(f.now))
+		}
+		state.Gates = append(state.Gates, observation)
+	}
+	if err := f.c.Status().Update(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	f.root = root
+}
+
 // pox5WindowFixture holds EnrollPoX5 open at 284 with the miner's native reads unavailable.
 func pox5WindowFixture(t *testing.T, ceiling int64) (*testFixture, *api.StacksNetworkParticipant) {
 	t.Helper()
@@ -167,43 +207,15 @@ func pox5WindowFixture(t *testing.T, ceiling int64) (*testFixture, *api.StacksNe
 	if err := f.c.Status().Update(ctx, actor); err != nil {
 		t.Fatal(err)
 	}
-	var genesis api.StacksGenesis
-	if err := f.c.Get(ctx, client.ObjectKey{Namespace: "test", Name: "genesis"}, &genesis); err != nil {
-		t.Fatal(err)
-	}
-	genesis.Spec.Bootstrap.Gates = []api.Gate{
+	setGates(t, f, []api.Gate{
 		{Name: "PrepareBitcoin", BitcoinCeiling: 203},
 		{Name: "EnrollPoX4", BitcoinCeiling: 234},
 		{Name: "PrepareNakamoto", BitcoinCeiling: 251},
 		{Name: "PreparePoX5", BitcoinCeiling: 281},
 		{Name: "EnrollPoX5", BitcoinCeiling: ceiling, TargetCycle: ptr.To(int64(15))},
 		{Name: "PrepareWaterfall", BitcoinCeiling: 299},
-	}
-	if err := f.c.Update(ctx, &genesis); err != nil {
-		t.Fatal(err)
-	}
-	ref := binding("StacksGenesis", &genesis)
-	ref.Fingerprint = foundation.Digest(genesis.Spec)
-	initial := f.readInitial(t)
-	initial.Spec.Genesis = ref
-	if err := f.c.Update(ctx, initial); err != nil {
-		t.Fatal(err)
-	}
-	root := f.root.DeepCopy()
-	root.Status.GenesisRef = &ref
-	state := root.Status.Initialization
-	state.GateIndex, state.AuthorizedCeiling, state.Gates = 4, ceiling, nil
-	for i, gate := range genesis.Spec.Bootstrap.Gates {
-		observation := api.GateObservation{Name: gate.Name}
-		if i < 4 {
-			observation.CompletedAt = ptr.To(metav1.NewTime(f.now))
-		}
-		state.Gates = append(state.Gates, observation)
-	}
-	if err := f.c.Status().Update(ctx, root); err != nil {
-		t.Fatal(err)
-	}
-	f.root, f.rpc.height = root, 284
+	}, 4)
+	f.rpc.height = 284
 	return f, actor
 }
 
@@ -528,6 +540,68 @@ func TestFirstAnchorDemandEndsForTheCohort(t *testing.T) {
 			if err != nil || got != tc.want {
 				t.Fatalf("ready=%v err=%v", got, err)
 			}
+		})
+	}
+}
+
+// TestGateCompletionReplacesItsUnusableOffer covers a gate that completes below its ceiling while its offer is pending.
+func TestGateCompletionReplacesItsUnusableOffer(t *testing.T) {
+	gates := []api.Gate{
+		{Name: "PrepareBitcoin", BitcoinCeiling: 203},
+		{Name: "EnrollPoX4", BitcoinCeiling: 234},
+		{Name: "PrepareNakamoto", BitcoinCeiling: 251},
+	}
+	for _, armed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("armed-%t", armed), func(t *testing.T) {
+			f, _, _ := nextGateFixture(t)
+			setGates(t, f, gates, 1)
+			ctx := context.Background()
+			scheduler := f.schedulerFor()
+			if e := f.worker.Step(ctx); e != nil {
+				t.Fatal(e)
+			}
+			f.reconcile(t, scheduler)
+			f.now = f.now.Add(time.Second)
+			f.reconcile(t, scheduler)
+			f.reconcile(t, scheduler)
+			stale := f.readRecord(t).Spec.Offer
+			if stale == nil || stale.Ceiling != 234 || stale.ExpectedHeight != 203 {
+				t.Fatalf("EnrollPoX4 offer missing: %+v", stale)
+			}
+			setGates(t, f, gates, 2)
+			if armed {
+				record := f.readRecord(t)
+				record.Status.Armed = &bitcoin.BitcoinArmedRPC{ID: "in-flight"}
+				if e := f.c.Status().Update(ctx, record); e != nil {
+					t.Fatal(e)
+				}
+				f.reconcile(t, f.schedulerFor())
+				if got, state := f.readRecord(t).Spec.Offer, f.readInitial(t).Status; !reflect.DeepEqual(got, stale) ||
+					state.Reason != "RPCOutstanding" {
+					t.Fatalf("armed offer replaced: %+v reason=%s", got, state.Reason)
+				}
+				return
+			}
+			if e := f.worker.Step(ctx); e == nil || f.rpc.count() != 0 {
+				t.Fatalf("worker accepted an offer above the completed gate: %v", e)
+			}
+			// A restarted scheduler recovers from persisted status alone; the spent cadence slot still applies.
+			restarted := f.schedulerFor()
+			f.reconcile(t, restarted)
+			if got := f.readRecord(t).Spec.Offer; !reflect.DeepEqual(got, stale) {
+				t.Fatalf("offer changed before its cadence slot: %+v", got)
+			}
+			f.now = f.readInitial(t).Status.NextOpportunityAt.Time
+			f.reconcile(t, restarted)
+			f.reconcile(t, restarted)
+			offer := f.readRecord(t).Spec.Offer
+			if offer == nil || offer.Number != stale.Number+1 || offer.Ceiling != 251 || offer.ExpectedHeight != 203 {
+				t.Fatalf("replacement offer = %+v, stale = %+v", offer, stale)
+			}
+			if e := f.worker.Step(ctx); e != nil {
+				t.Fatal(e)
+			}
+			eventually(t, func() bool { return f.readRecord(t).Status.CompletedOffer == offer.Number })
 		})
 	}
 }
