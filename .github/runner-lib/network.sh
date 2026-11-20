@@ -169,7 +169,9 @@ collect() {
   # Each Bitcoin node's peers with direction and P2P permissions, read with its control credentials.
   for pod in $(kn get pods -o name 2>/dev/null | grep -E 'bitcoinnode-.+-actor-'); do
     prefix=${pod#pod/} prefix=${prefix%-actor-*}
-    secret=$(kn get secrets -o name 2>/dev/null | grep -m1 "/$prefix-rpc-c") || continue
+    # awk reads all input: an early-exiting reader would SIGPIPE kubectl under pipefail.
+    secret=$(kn get secrets -o name 2>/dev/null | awk -v p="/$prefix-rpc-c" 'index($0, p) && !n++')
+    [ -n "$secret" ] || continue
     user=$(kn get "$secret" -o jsonpath='{.data.username}' | base64 -d) || continue
     pass=$(kn get "$secret" -o jsonpath='{.data.password}' | base64 -d) || continue
     echo "# ${prefix##*-bitcoinnode-}"
@@ -353,7 +355,7 @@ operator_reads "$running_at" "$initialized_at" running Initialized > "$OUT/opera
 operator_passes "$running_at" "$initialized_at" running Initialized > "$OUT/operator-passes-initialization.txt"
 initialization_summary | tee -a "$OUT/initialized.env"
 
-rpc=$(kn get svc -o name | grep -m1 -E 'stacksnode-.+-rpc' | cut -d/ -f2)
+rpc=$(kn get svc -o name | awk -F/ '/stacksnode-.+-rpc/ && !n++ { print $2 }')
 info() { k get --raw "/api/v1/namespaces/$NS/services/$rpc:20443/proxy/v2/info" | jq -c '{burn: .burn_block_height, stacks: .stacks_tip_height}'; }
 # Health window: 60 s of wall-clock Operational samples before any bulk evidence collection,
 # summarized from operational-samples.txt with its actual duration.

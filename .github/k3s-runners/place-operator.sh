@@ -15,7 +15,7 @@ k patch deployment network --type=strategic -p "$(jq -nc --arg host "$node" --ar
 k rollout status deployment network --timeout 5m >/dev/null
 pod="$(k get pods -l app.kubernetes.io/instance=network -o json |
   jq -r --arg node "$node" --arg image "$image" '.items[] | select(.metadata.deletionTimestamp == null and
-    .spec.nodeName == $node and ($image == "" or .spec.containers[0].image == $image)) | .metadata.name' | head -1)"
+    .spec.nodeName == $node and ($image == "" or .spec.containers[0].image == $image)) | .metadata.name' | awk 'NR == 1')"
 [ -n "$pod" ] || { echo "no operator Pod on $node${image:+ running $image}" >&2; exit 1; }
 for _ in $(seq 60); do
   holder="$(k get lease stacks-network-operator.network.stacks.org -o jsonpath='{.spec.holderIdentity}' 2>/dev/null || true)"
