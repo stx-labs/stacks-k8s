@@ -3968,8 +3968,9 @@ spec:
                     maxLength: 128
                     type: string
                   contracts:
-                    description: Contracts retains exact pinned source and native
-                      registry observations.
+                    description: |-
+                      Contracts retains the last successful exact pinned source and native registry observation.
+                      A failed read keeps it with its original observedAt; a conflict withdraws it.
                     properties:
                       aggregatePublicKey:
                         description: AggregatePublicKey is the explicit registry aggregate

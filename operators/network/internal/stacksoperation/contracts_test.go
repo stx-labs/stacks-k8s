@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/cylewitruk-stacks/stacks-k8s/libs/stacks/transaction"
 	"github.com/cylewitruk-stacks/stacks-k8s/operators/network/internal/protocolcontracts"
 	"github.com/cylewitruk-stacks/stacks-k8s/operators/network/internal/stacksworker"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // contractNode models native facts independently of submission acknowledgements and transaction IDs.
@@ -233,6 +235,36 @@ func TestContractObservationRequiresStableTipAndExactNextNonce(t *testing.T) {
 	result, _ = r.Step(ctx, s)
 	if result.Pending != 1 || result.Transactions.PostconditionObserved != 0 {
 		t.Fatal("moving tip settled ambiguous operation")
+	}
+}
+
+func TestContractObservationSurvivesAFailedReadUntilAConflict(t *testing.T) {
+	r, n, s := contractFixture(t)
+	ctx := context.Background()
+	for _, source := range r.sources {
+		n.sources[source.Name] = source.Source
+	}
+	n.initialized = true
+	observed, _ := r.Step(ctx, s)
+	if observed.Contracts == nil || !observed.Contracts.Complete {
+		t.Fatalf("converged contracts not observed: %+v", observed)
+	}
+	r.Now = func() time.Time { return time.Unix(1003, 0) }
+	n.movingTip = true
+	result, _ := r.Step(ctx, s)
+	if result.Reason != api.ReasonContractObservationUnavailable || result.Failed ||
+		!reflect.DeepEqual(result.Contracts, observed.Contracts) {
+		t.Fatalf("a failed read withdrew or refreshed the last observation: %+v", result.Contracts)
+	}
+	n.movingTip = false
+	result, _ = r.Step(ctx, s)
+	if result.Contracts == nil || !result.Contracts.ObservedAt.Equal(&metav1.Time{Time: time.Unix(1003, 0)}) {
+		t.Fatalf("a successful read did not replace the observation: %+v", result.Contracts)
+	}
+	n.mismatch = "threshold"
+	result, _ = r.Step(ctx, s)
+	if !result.Failed || result.Contracts != nil {
+		t.Fatalf("a conflict kept the previous observation: %+v", result.Contracts)
 	}
 }
 

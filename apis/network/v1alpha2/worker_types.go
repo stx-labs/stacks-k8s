@@ -114,6 +114,7 @@ type WorkerExecutionStatus struct {
 	PoX5 *PoX5EnrollmentObservation `json:"pox5,omitempty"`
 	// AdministratorTransactions contains the distinct administrator account stream, when needed.
 	AdministratorTransactions *TransactionExecutionStatus `json:"administratorTransactions,omitempty"`
-	// Contracts retains exact pinned source and native registry observations.
+	// Contracts retains the last successful exact pinned source and native registry observation.
+	// A failed read keeps it with its original observedAt; a conflict withdraws it.
 	Contracts *ContractSetObservation `json:"contracts,omitempty"`
 }

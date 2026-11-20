@@ -34,8 +34,10 @@ type ContractRole struct {
 	goal    *contractGoal
 	applied string
 	// inputs retains the last locally validated public contract baseline.
-	inputs  appliedInputs[ContractInputs]
-	failed  bool
+	inputs appliedInputs[ContractInputs]
+	failed bool
+	// current is the last successful observation. A failed read keeps it, with its original
+	// ObservedAt, so consumers' freshness bounds rather than one lost race withdraw it.
 	current *api.ContractSetObservation
 }
 
@@ -82,12 +84,13 @@ func (r *ContractRole) validInputs(in ContractInputs) bool {
 
 // Step observes pending work while paused and authorizes each new send immediately beforehand.
 func (r *ContractRole) Step(ctx context.Context, snapshot stacksworker.Snapshot) (stacksworker.RoleResult, error) {
+	previous := r.current
 	r.current = nil
 	if r.failed {
 		return r.result(reasonContractOperationFailed), nil
 	}
 	if r.goal != nil {
-		return r.result(r.observeGoal(ctx)), nil
+		return r.result(r.observeGoal(ctx, previous)), nil
 	}
 	if r.Resolve == nil || snapshot.Participant == nil || snapshot.Participant.Status.Admission == nil {
 		return r.result(reasonPolicyUnavailable), nil
@@ -106,9 +109,7 @@ func (r *ContractRole) Step(ctx context.Context, snapshot stacksworker.Snapshot)
 	r.applied = snapshot.Participant.Status.Admission.PolicyDigest
 	state, err := observeContracts(ctx, in, r.sources, r.now())
 	if err != nil {
-		if errors.Is(err, errContractConflict) {
-			r.failed = true
-		}
+		r.observationFailed(err, previous)
 		return r.result(api.ReasonContractObservationUnavailable), nil
 	}
 	r.current = state.observation
@@ -179,8 +180,18 @@ func (r *ContractRole) offer(
 	return r.result(reason), nil
 }
 
+// observationFailed latches a conflict, which withdraws the observation, and otherwise keeps
+// the previous one.
+func (r *ContractRole) observationFailed(err error, previous *api.ContractSetObservation) {
+	if errors.Is(err, errContractConflict) {
+		r.failed = true
+		return
+	}
+	r.current = previous
+}
+
 // observeGoal never resends; native state and canonical nonce are separate from TxID inclusion.
-func (r *ContractRole) observeGoal(ctx context.Context) string {
+func (r *ContractRole) observeGoal(ctx context.Context, previous *api.ContractSetObservation) string {
 	goal := r.goal
 	reason, _ := r.stream.Observe(ctx, r.now())
 	if reason == reasonExecutionRejected {
@@ -189,9 +200,7 @@ func (r *ContractRole) observeGoal(ctx context.Context) string {
 	}
 	state, err := observeContracts(ctx, goal.input, r.sources, r.now())
 	if err != nil {
-		if errors.Is(err, errContractConflict) {
-			r.failed = true
-		}
+		r.observationFailed(err, previous)
 		return api.ReasonContractObservationUnavailable
 	}
 	r.current = state.observation
@@ -234,9 +243,10 @@ func (r *ContractRole) observeGoal(ctx context.Context) string {
 
 // Drain observes only the captured pending operation until framework-bounded disposal.
 func (r *ContractRole) Drain(ctx context.Context, _ stacksworker.Snapshot) (stacksworker.DrainResult, error) {
+	previous := r.current
 	r.current = nil
 	if r.goal != nil {
-		r.observeGoal(ctx)
+		r.observeGoal(ctx, previous)
 	}
 	pending := r.pending()
 	return stacksworker.DrainResult{
