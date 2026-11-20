@@ -52,6 +52,11 @@ Clarity-3 contract deployment additionally requires a native canonical Nakamoto
 header, since Bitcoin can cross epoch 3.0 while the Stacks tip remains epoch 2.5.
 After epoch 3.0, bootstrap [tenure pacing](../design/public-api/protocol-timing.md#tenure-pacing-after-epoch-30)
 holds each Bitcoin block, for at most 30 seconds, until every captured miner holds its tenure.
+Core selects the PoX contract by its Bitcoin tip but reads it at its Stacks tip. While a lagging
+Stacks tip predates that contract, as across closely spaced epochs, PoX reads fail with HTTP 404.
+A node whose unchanged tip and process are confirmed then reports `PoXUnreadableAtTip`
+instead of `ObservationUnavailable`; it stays unavailable, and `observedAt` keeps the last
+complete observation.
 
 Bootstrap requirements capture values needed after a controller restart, including initial
 mining-enabled roles. Compatible image, resource and seed changes may proceed during

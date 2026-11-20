@@ -11,6 +11,8 @@ const (
 	reasonDrainingControl = "DrainingControl"
 	// reasonObserved reports Observed.
 	reasonObserved = "Observed"
+	// reasonPoXUnreadableAtTip reports PoXUnreadableAtTip.
+	reasonPoXUnreadableAtTip = "PoXUnreadableAtTip"
 	// reasonPrepareBitcoinUnavailable reports PrepareBitcoinUnavailable.
 	reasonPrepareBitcoinUnavailable = "PrepareBitcoinUnavailable"
 	// reasonReady reports Ready.

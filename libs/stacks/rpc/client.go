@@ -92,13 +92,28 @@ func (c *Client) request(ctx context.Context, method, path, contentType string, 
 	return response.StatusCode, data, nil
 }
 
+// StatusError is a complete native response with a non-success HTTP status. It retains only
+// the code: Core reuses codes across causes, so a status alone does not identify the reason.
+type StatusError struct {
+	// Code is the native HTTP status.
+	Code int
+}
+
+// Error reports the status without exposing the native response body.
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("native RPC observation unavailable (HTTP %d)", e.Code)
+}
+
 // get decodes one successful native observation.
 func (c *Client) get(ctx context.Context, path string, result any) error {
 	code, data, e := c.request(ctx, http.MethodGet, path, "application/json", nil)
 	if e != nil {
 		return e
 	}
-	if code != http.StatusOK || json.Unmarshal(data, result) != nil {
+	if code != http.StatusOK {
+		return &StatusError{Code: code}
+	}
+	if json.Unmarshal(data, result) != nil {
 		return fmt.Errorf("native RPC observation unavailable (HTTP %d)", code)
 	}
 	return nil

@@ -2,7 +2,9 @@ package participantworkload
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -27,6 +29,7 @@ type nativeObservationFixture struct {
 	cycle       uint64
 	sortitions  int
 	noSortition bool
+	poxErr      error
 }
 
 func (n *nativeObservationFixture) TenureSortition(_ context.Context, consensus string) (rpc.TenureSortition, error) {
@@ -49,6 +52,9 @@ func (n *nativeObservationFixture) ChainView(context.Context) (rpc.ChainView, er
 }
 
 func (n *nativeObservationFixture) PoXAt(_ context.Context, tip string) (rpc.PoX, error) {
+	if n.poxErr != nil {
+		return rpc.PoX{}, n.poxErr
+	}
 	if tip != n.view.IndexBlockID {
 		return rpc.PoX{}, fmt.Errorf("wrong tip")
 	}
@@ -227,7 +233,17 @@ func TestProtocolHeartbeatDoesNotTriggerActorConfigurationDependencies(t *testin
 	}
 }
 
-func TestProtocolObservationRejectsSameNamePodReplacementWithoutFreshening(t *testing.T) {
+// protocolTargetFixture is a ready Stacks node Pod, its frozen genesis and a minute-old observation.
+type protocolTargetFixture struct {
+	root    *api.StacksNetwork
+	p       *api.StacksNetworkParticipant
+	genesis *api.StacksGenesis
+	pod     *corev1.Pod
+	state   *api.ParticipantRuntimeStatus
+	oldAt   metav1.Time
+}
+
+func newProtocolTarget() protocolTargetFixture {
 	p := stacksParticipantFixture("StacksNode")
 	root := &api.StacksNetwork{
 		ObjectMeta: metav1.ObjectMeta{Name: "network", Namespace: p.Namespace, UID: p.Spec.NetworkUID},
@@ -262,36 +278,116 @@ func TestProtocolObservationRejectsSameNamePodReplacementWithoutFreshening(t *te
 			},
 		},
 	}
-	current := pod.DeepCopy()
-	current.UID = "replacement-pod"
-	oldAt := metav1.NewTime(time.Now().Add(-time.Minute))
+	oldAt := metav1.NewTime(time.Now().Add(-time.Minute).UTC().Truncate(time.Second))
 	state := &api.ParticipantRuntimeStatus{
 		PodRef:              binding("Pod", pod),
 		ContainerID:         "containerd://native",
 		ConfigurationDigest: "config",
 		Protocol: &api.StacksProtocolObservation{
 			Available:            true,
+			Reason:               reasonObserved,
 			ObservedAt:           oldAt,
 			LastHeightAdvancedAt: oldAt,
 			HighestStacksHeight:  20,
+			StacksHeight:         20,
+			BurnHeight:           230,
 		},
 	}
+	return protocolTargetFixture{root: root, p: p, genesis: genesis, pod: pod, state: state, oldAt: oldAt}
+}
+
+func TestProtocolObservationRejectsSameNamePodReplacementWithoutFreshening(t *testing.T) {
+	f := newProtocolTarget()
+	current := f.pod.DeepCopy()
+	current.UID = "replacement-pod"
 	node := &nativeObservationFixture{
 		view: rpc.ChainView{Info: rpc.Info{NetworkID: 0x80000000, BurnHeight: 240, StacksHeight: 30}},
 	}
-	c := testClient(t, genesis, current)
+	c := testClient(t, f.genesis, current)
 	r := Reconciler{Reader: c, ProtocolClient: func(endpoint string) (StacksProtocolRPC, error) {
 		if endpoint != "http://10.10.0.2:20443" {
 			t.Fatal("observer used a load-balanced Service instead of exact Pod IP")
 		}
 		return node, nil
 	}}
-	if err := r.observeStacksProtocol(context.Background(), root, p, pod, state); err == nil {
+	if err := r.observeStacksProtocol(context.Background(), f.root, f.p, f.pod, f.state); err == nil {
 		t.Fatal("same-name Pod replacement retained protocol authority")
 	}
-	if state.Protocol.Available || !state.Protocol.ObservedAt.Equal(&oldAt) ||
-		!state.Protocol.LastHeightAdvancedAt.Equal(&oldAt) {
+	if f.state.Protocol.Available || !f.state.Protocol.ObservedAt.Equal(&f.oldAt) ||
+		!f.state.Protocol.LastHeightAdvancedAt.Equal(&f.oldAt) {
 		t.Fatal("failed identity observation retained authority or freshened evidence")
+	}
+}
+
+func TestPoXUnreadableAtTipRequiresAStable404(t *testing.T) {
+	view := rpc.ChainView{Info: rpc.Info{NetworkID: 0x80000000, BurnHeight: 240, StacksHeight: 30}}
+	changed := view
+	changed.BurnHeight = 241
+	for name, node := range map[string]*nativeObservationFixture{
+		"server error":     {view: view, poxErr: &rpc.StatusError{Code: http.StatusInternalServerError}},
+		"transport":        {view: view, poxErr: fmt.Errorf("native RPC transport unavailable")},
+		"deadline":         {view: view, poxErr: context.DeadlineExceeded},
+		"tip moved":        {view: view, after: &changed, poxErr: &rpc.StatusError{Code: http.StatusNotFound}},
+		"stable 404 (tip)": {view: view, poxErr: &rpc.StatusError{Code: http.StatusNotFound}},
+	} {
+		_, err := collectStacksProtocol(context.Background(), node, nil, nil, time.Now())
+		if err == nil || errors.Is(err, errPoXUnreadableAtTip) != (name == "stable 404 (tip)") {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestPoXUnreadableAtTipKeepsTheLastSuccessfulObservation(t *testing.T) {
+	ctx := context.Background()
+	view := rpc.ChainView{Info: rpc.Info{NetworkID: 0x80000000, BurnHeight: 240, StacksHeight: 30}}
+	observe := func(t *testing.T, f protocolTargetFixture, pod *corev1.Pod, poxErr error) error {
+		t.Helper()
+		node := &nativeObservationFixture{view: view, poxErr: poxErr}
+		r := Reconciler{Reader: testClient(t, f.genesis, pod), ProtocolClient: func(string) (StacksProtocolRPC, error) {
+			return node, nil
+		}}
+		return r.observeStacksProtocol(ctx, f.root, f.p, f.pod, f.state)
+	}
+	notFound := &rpc.StatusError{Code: http.StatusNotFound}
+
+	f := newProtocolTarget()
+	want := f.state.Protocol.DeepCopy()
+	want.Available, want.Reason = false, reasonPoXUnreadableAtTip
+	if err := observe(t, f, f.pod, notFound); err != nil {
+		t.Fatalf("a confirmed process with unreadable PoX failed the observation: %v", err)
+	}
+	if !reflect.DeepEqual(f.state.Protocol, want) {
+		t.Fatalf("diagnostic changed retained evidence: %+v", f.state.Protocol)
+	}
+	if err := observe(t, f, f.pod, nil); err != nil {
+		t.Fatal(err)
+	}
+	recovered := f.state.Protocol
+	if !recovered.Available || recovered.Reason != reasonObserved || !recovered.ObservedAt.After(f.oldAt.Time) ||
+		recovered.StacksHeight != 30 || recovered.HighestStacksHeight != 30 {
+		t.Fatalf("PoX recovery did not restore a complete observation: %+v", recovered)
+	}
+
+	replaced := newProtocolTarget()
+	current := replaced.pod.DeepCopy()
+	current.UID = "replacement-pod"
+	for name, c := range map[string]struct {
+		pod *corev1.Pod
+		err error
+	}{
+		"server error":     {replaced.pod, &rpc.StatusError{Code: http.StatusInternalServerError}},
+		"deadline":         {replaced.pod, context.DeadlineExceeded},
+		"replaced process": {current, notFound},
+	} {
+		f := newProtocolTarget()
+		want := f.state.Protocol.DeepCopy()
+		want.Available, want.Reason = false, api.ReasonObservationUnavailable
+		if err := observe(t, f, c.pod, c.err); err == nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !reflect.DeepEqual(f.state.Protocol, want) {
+			t.Fatalf("%s: %+v", name, f.state.Protocol)
+		}
 	}
 }
 

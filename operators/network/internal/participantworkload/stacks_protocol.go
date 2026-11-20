@@ -2,8 +2,10 @@ package participantworkload
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"reflect"
 	"strings"
@@ -23,6 +25,11 @@ var (
 	protocolRPCAllowance      = time.Duration(foundation.ObservationPolicy().RPCAllowanceSeconds) * time.Second
 	protocolHeartbeatInterval = time.Duration(foundation.ObservationPolicy().HeartbeatIntervalSeconds) * time.Second
 )
+
+// errPoXUnreadableAtTip is a 404 PoX read at the node's own canonical tip, unchanged across the
+// read. Core selects the PoX contract by its Bitcoin tip but evaluates it at its Stacks tip, so
+// this occurs while the Stacks tip predates that contract, e.g. across closely spaced epochs.
+var errPoXUnreadableAtTip = errors.New("PoX unreadable at the canonical Stacks tip")
 
 // StacksProtocolRPC exposes only bounded native protocol observations.
 type StacksProtocolRPC interface {
@@ -78,7 +85,7 @@ func collectStacksProtocol(
 	}
 	pox, err := node.PoXAt(ctx, before.IndexBlockID)
 	if err != nil {
-		return nil, err
+		return nil, poxFailure(ctx, node, before, err)
 	}
 	if before.NetworkID != 0x80000000 || before.BurnHeight != pox.BurnHeight {
 		return nil, fmt.Errorf("native chain views disagree")
@@ -142,6 +149,22 @@ func collectStacksProtocol(
 	return observation, nil
 }
 
+// poxFailure distinguishes errPoXUnreadableAtTip from other failed PoX reads.
+func poxFailure(ctx context.Context, node StacksProtocolRPC, before rpc.ChainView, err error) error {
+	var status *rpc.StatusError
+	if !errors.As(err, &status) || status.Code != http.StatusNotFound {
+		return err
+	}
+	after, err := node.ChainView(ctx)
+	if err != nil {
+		return err
+	}
+	if before != after {
+		return fmt.Errorf("canonical view changed during observation")
+	}
+	return errPoXUnreadableAtTip
+}
+
 // observeTenure reuses the immutable sortition of an unchanged tenure. A failed read omits it:
 // the tenure is then unknown, which never establishes progress.
 func observeTenure(
@@ -165,6 +188,9 @@ func observeTenure(
 }
 
 // observeStacksProtocol reads the exact Pod IP, then confirms the same process still owns it.
+// Failures and PoX unreadable at the confirmed process's tip withdraw availability and keep the
+// last successful observation's time and heights. The latter is a recorded diagnostic, not an
+// error: the process is reachable and its workload need not converge again.
 func (r *Reconciler) observeStacksProtocol(
 	ctx context.Context,
 	root *api.StacksNetwork,
@@ -246,9 +272,10 @@ func (r *Reconciler) observeStacksProtocol(
 	bounded, cancel := context.WithTimeout(ctx, protocolRPCAllowance)
 	defer cancel()
 	observed, err := collectStacksProtocol(bounded, node, state.Protocol, cycle, time.Now())
-	if err != nil {
+	if err != nil && !errors.Is(err, errPoXUnreadableAtTip) {
 		return err
 	}
+	// The specific reason also requires that the observed process still owns the address.
 	var current corev1.Pod
 	if err := r.Reader.Get(ctx, client.ObjectKeyFromObject(pod), &current); err != nil {
 		return err
@@ -260,6 +287,13 @@ func (r *Reconciler) observeStacksProtocol(
 		currentState.ContainerID != state.ContainerID ||
 		current.Annotations[api.AnnotationConfigurationDigest] != state.ConfigurationDigest {
 		return fmt.Errorf("protocol target process changed")
+	}
+	if err != nil {
+		if state.Protocol != nil {
+			state.Protocol.Available = false
+			state.Protocol.Reason = reasonPoXUnreadableAtTip
+		}
+		return nil
 	}
 	observed.PodUID = pod.UID
 	observed.ContainerID = state.ContainerID

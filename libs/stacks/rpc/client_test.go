@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -149,6 +150,28 @@ func TestMalformedObservations(t *testing.T) {
 		if _, e := c.DataVariable(context.Background(), testAddress, "sample", "value"); e == nil {
 			t.Fatal("accepted invalid Clarity")
 		}
+	}
+}
+
+func TestNonSuccessStatusIsTypedWithoutTheBody(t *testing.T) {
+	for _, code := range []int{http.StatusNotFound, http.StatusInternalServerError} {
+		c := clientFor(t, func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "No such chain tip", code)
+		})
+		_, e := c.PoXAt(context.Background(), strings.Repeat("a", 64))
+		var status *StatusError
+		if !errors.As(e, &status) || status.Code != code || strings.Contains(e.Error(), "chain tip") {
+			t.Fatalf("HTTP %d: %v", code, e)
+		}
+	}
+	c := clientFor(t, func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := io.WriteString(w, "not json"); err != nil {
+			t.Error(err)
+		}
+	})
+	var status *StatusError
+	if _, e := c.PoX(context.Background()); e == nil || errors.As(e, &status) {
+		t.Fatalf("undecodable success reported a status: %v", e)
 	}
 }
 

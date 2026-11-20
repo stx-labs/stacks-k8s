@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Usage: network.sh EXAMPLE KUBECONFIG CONTEXT OUTPUT_DIR
 # Runs a public StacksNetwork example (e.g. docs/design/public-api/examples/minimal.yaml):
-# apply paused, start, wait for initialization, sample native progress, then dispose in
-# the documented order. The example's kind node pins are mapped onto this cluster:
-# stacks-k8s-worker and stacks-k8s-worker2 pins rotate through the space-separated
-# WORKER_NODES and WORKER2_NODES, and stacks-k8s-control-plane becomes NODE_CONTROL_PLANE
+# apply paused, start, wait for initialization, sample native progress for a 60 s health
+# window, collect evidence, then dispose in the documented order. operational.txt records
+# Operational transitions with phase markers from start until disposal. The example's kind
+# node pins are mapped onto this cluster: stacks-k8s-worker and stacks-k8s-worker2 pins
+# rotate through the space-separated WORKER_NODES and WORKER2_NODES, and
+# stacks-k8s-control-plane becomes NODE_CONTROL_PLANE
 # (defaults: the local k3d cluster). RESOLVE_TIMEOUT bounds resolution (default 300s) and
 # INIT_TIMEOUT initialization (default 1200s: about twice a single runner's ~600s for the
 # minimal example), both in seconds. RESOLVE_ONLY=true disposes right after resolution.
@@ -25,6 +27,38 @@ k() { kubectl --kubeconfig "$KCFG" --context "$CTX" "$@"; }
 kn() { k -n "$NS" "$@"; }
 stamp() { date -u +%H:%M:%S; }
 conditions() { kn get stacksnetwork network -o jsonpath='{range .status.conditions[*]}{.type}={.status}/{.reason} {end}'; }
+# Operational as "status reason lastTransitionTime", or "Absent" before the condition exists.
+# A failed or timed-out API read returns non-zero.
+operational() {
+  local out
+  out="$(kn get stacksnetwork network --request-timeout=5s \
+    -o jsonpath='{range .status.conditions[?(@.type=="Operational")]}{.status} {.reason} {.lastTransitionTime}{end}' 2>/dev/null)" ||
+    return 1
+  echo "${out:-Absent}"
+}
+# Every 5 s, appends "epoch-seconds state" to operational-samples.txt, where state is the
+# Operational value or ReadFailed when the API read fails, and records each changed state in
+# operational.txt as "HH:MM:SS state". A changed transition time reveals transitions between
+# samples.
+sample_operational() {
+  local last="" current
+  while :; do
+    current="$(operational)" || current=ReadFailed
+    echo "$(date +%s) $current" >> "$OUT/operational-samples.txt"
+    if [ "$current" != "$last" ]; then echo "$(stamp) $current" >> "$OUT/operational.txt"; last="$current"; fi
+    sleep 5
+  done
+}
+# Prints a timestamped phase marker and records it among the Operational transitions.
+mark() { echo "$(stamp) $*"; echo "$(stamp) # $*" >> "$OUT/operational.txt"; }
+# Operational samples in [START, END) epoch seconds as "status/reason:count,...", with
+# ReadFailed and Absent counted as states.
+operational_summary() {
+  awk -v start="$1" -v end="$2" '$1 >= start && $1 < end {
+      n[(NF > 2 ? $2 "/" $3 : $2)]++
+    }
+    END { for (k in n) print k ":" n[k] }' "$OUT/operational-samples.txt" 2>/dev/null | sort | paste -sd, -
+}
 # Greatest value of status FIELD across RESOURCE.
 highest() {
   kn get "$1" -o jsonpath="{range .items[*]}{.status.$2}{\"\n\"}{end}" 2>/dev/null | sort -n | tail -1
@@ -120,7 +154,10 @@ initialization_summary() {
     jq -r '.items[].status.tenurePacing // empty | "tenure_pacing=\(.progressed)/\(.expired)/\(.unbound)"'
 }
 # Evidence is lost with the namespace and the runner: save it before teardown or on failure.
+# Collection loads the API server and kubelets, so its markers bound a period that is not
+# representative of network health.
 collect() {
+  mark "evidence collection started"
   mkdir -p "$OUT/logs"
   kn get pods -o wide > "$OUT/pods.txt" 2>&1 || true
   kn get stacksnetwork network -o yaml > "$OUT/network.yaml" 2>&1 || true
@@ -136,6 +173,7 @@ collect() {
     fi
     rm -f "$OUT/logs/previous"
   done
+  mark "evidence collection finished"
 }
 # API server request counters for every client, one series per label set.
 requests() { k get --raw /metrics 2>/dev/null | grep '^apiserver_request_total{' || true; }
@@ -214,10 +252,11 @@ dispose() {
   k delete namespace "$NS" --wait=true --timeout=5m
   echo "$(stamp) disposed"
 }
-sampler=""
+sampler="" operational_sampler=""
 on_exit() {
   local status=$?
   [ -z "$sampler" ] || kill "$sampler" 2>/dev/null || true
+  [ -z "$operational_sampler" ] || kill "$operational_sampler" 2>/dev/null || true
   if [ "$status" -ne 0 ]; then collect; hold; fi
 }
 trap on_exit EXIT
@@ -269,6 +308,8 @@ head -1 /proc/stat > "$OUT/cpu-running.txt" 2>/dev/null || true
 : > "$OUT/observation-ages.txt"
 sample_receipts "$OUT/receipts.txt" &
 sampler=$!
+sample_operational &
+operational_sampler=$!
 echo "$(stamp) running"
 last=""
 until [[ "$last" == *Initialized=True* ]]; do
@@ -295,10 +336,25 @@ initialization_summary | tee -a "$OUT/initialized.env"
 
 rpc=$(kn get svc -o name | grep -m1 -E 'stacksnode-.+-rpc' | cut -d/ -f2)
 info() { k get --raw "/api/v1/namespaces/$NS/services/$rpc:20443/proxy/v2/info" | jq -c '{burn: .burn_block_height, stacks: .stacks_tip_height}'; }
+# Health window: 60 s of wall-clock Operational samples before any bulk evidence collection,
+# summarized from operational-samples.txt with its actual duration.
+mark "health window started"
+window_start=$(date +%s)
 echo "$(stamp) progress $(info)"
-sleep 60
+remaining=$(( window_start + 60 - $(date +%s) ))
+(( remaining <= 0 )) || sleep "$remaining"
+window_end=$(date +%s)
+mark "health window ended"
 echo "$(stamp) progress $(info)"
+{
+  echo "operational_window=$(operational_summary "$window_start" "$window_end")"
+  echo "operational_window_seconds=$(( window_end - window_start ))"
+} | tee -a "$OUT/initialized.env"
 k get --raw "/api/v1/namespaces/$NS/services/$rpc:20443/proxy/v2/pox" | jq -c '{epoch: .current_epoch, cycle: .current_cycle.id}'
 collect
 hold
+kill "$operational_sampler" 2>/dev/null || true
+operational_sampler=""
+echo "Operational samples (transitions and phase markers):"
+cat "$OUT/operational.txt"
 dispose
