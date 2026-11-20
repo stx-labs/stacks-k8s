@@ -63,6 +63,10 @@ Fresh converged height/tip changes or current production identity/policy changes
 replace unsent stale offers subject to cadence, without waiting for their expiry.
 Workers still check current policy, pause, exact target and chain identity, and
 the frozen gate ceiling before sending. Expiry does not cancel an Armed RPC.
+A control worker logs each distinct refusal of a pending offer once, with the offer
+number and the stage that refused it (`Observation`, `GenerationUnaccounted`,
+`Authorization`, `Preflight`, `PayoutCheck` or `Arm`), and logs how long the offer
+was refused once a later step completes.
 Completed-initialization baseline opportunities retain their next-tick expiry.
 
 Each first-gate opportunity waits for a fresh post-receipt observation, so funding and

@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -78,6 +79,8 @@ type Worker struct {
 	cancel context.CancelFunc
 	// workers includes pre-arm activity so drain cannot race a late collector.
 	workers sync.WaitGroup
+	// refusals bounds diagnostics for pending offers that steps do not send.
+	refusals refusalLog
 }
 
 // Run observes desired state until shutdown, then drains receipts for at most 25 seconds.
@@ -85,6 +88,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	if e := w.defaults(); e != nil {
 		return e
 	}
+	log := ctrl.LoggerFrom(ctx).WithValues("execution", w.Input.RecordName)
 	ticker := time.NewTicker(w.PollInterval)
 	defer ticker.Stop()
 	for {
@@ -95,7 +99,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		default:
 		}
 		attempt, cancel := context.WithTimeout(ctx, 10*time.Second)
-		_ = w.Step(attempt)
+		w.refusals.observe(log, w.Step(attempt), w.Now())
 		cancel()
 		select {
 		case <-ctx.Done():
@@ -132,8 +136,9 @@ func (w *Worker) defaults() error {
 	return nil
 }
 
-// Step observes one record and authorizes at most one new bounded mutation.
-func (w *Worker) Step(ctx context.Context) error {
+// Step observes one record and authorizes at most one new bounded mutation. While an offer
+// is pending, an error is classified as an offerRefused by the stage that returned it.
+func (w *Worker) Step(ctx context.Context) (err error) {
 	record := &bitcoin.BitcoinExecution{}
 	if e := w.Reader.Get(
 		ctx,
@@ -141,6 +146,15 @@ func (w *Worker) Step(ctx context.Context) error {
 		record,
 	); e != nil {
 		return e
+	}
+	stage := refusalObservation
+	if offer := record.Spec.Offer; offer != nil && offer.Number > record.Status.CompletedOffer {
+		number := offer.Number
+		defer func() {
+			if err != nil {
+				err = &offerRefused{number: number, stage: stage, err: err}
+			}
+		}()
 	}
 	if record.UID != w.Input.RecordUID {
 		return fmt.Errorf("execution record was replaced")
@@ -184,6 +198,10 @@ func (w *Worker) Step(ctx context.Context) error {
 		}
 	}
 	if !generationAccounted(current.initialization, record) {
+		if record.Spec.Offer != nil && record.Spec.Offer.Number > record.Status.CompletedOffer {
+			stage = refusalAccounting
+			return errGenerationUnaccounted
+		}
 		return nil
 	}
 	if operation == nil {
@@ -193,12 +211,15 @@ func (w *Worker) Step(ctx context.Context) error {
 	}
 	if operation == nil && record.Spec.Offer != nil && record.Spec.Offer.Number > record.Status.CompletedOffer {
 		offer := record.Spec.Offer
+		stage = refusalAuthority
 		if e = w.authorizeOffer(ctx, current, offer); e != nil {
 			return e
 		}
+		stage = refusalPreflight
 		if observation.Height != offer.ExpectedHeight || observation.Tip != offer.ExpectedTip {
 			return fmt.Errorf("generation preflight differs from selected chain")
 		}
+		stage = refusalPayoutCheck
 		if e = w.RPC.Check(ctx, current.target.Endpoint, offer.Address); e != nil {
 			return e
 		}
@@ -207,6 +228,7 @@ func (w *Worker) Step(ctx context.Context) error {
 	if operation == nil {
 		return nil
 	}
+	stage = refusalArm
 	return w.arm(ctx, record, current, *operation)
 }
 
