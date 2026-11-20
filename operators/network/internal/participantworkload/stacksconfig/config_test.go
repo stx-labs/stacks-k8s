@@ -319,3 +319,38 @@ func TestMetricsOverridesRejectExactManagedPath(t *testing.T) {
 		}
 	}
 }
+
+func TestMinerCommitsMayBeReplacedThroughALongTenure(t *testing.T) {
+	p, secrets := nodeFixture()
+	for _, rate := range []int32{1, 2, 3, 7, 100} {
+		p.Mining, p.FeeRateSatsPerVByte = true, rate
+		data, err := Node(p, secrets)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "rbf_fee_increment = 1\n") {
+			t.Fatalf("rate %d: no explicit replacement increment", rate)
+		}
+		var d nodeDocument
+		if err := toml.Unmarshal(data, &d); err != nil {
+			t.Fatal(err)
+		}
+		// Core's bound: a commit at the current rate is replaced unless it exceeds rate*max_rbf/100.
+		replacements, current := 0, int64(rate)
+		for current <= int64(rate)*d.Burnchain.MaxRBF/100 {
+			current += d.Burnchain.RBFIncrement
+			replacements++
+		}
+		if replacements < commitReplacements || replacements > commitReplacements+1 {
+			t.Fatalf("rate %d: max_rbf %d permits %d replacements", rate, d.Burnchain.MaxRBF, replacements)
+		}
+	}
+	p.Mining = false
+	data, err := Node(p, secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "rbf") {
+		t.Fatal("a non-mining node rendered commit replacement settings")
+	}
+}

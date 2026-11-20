@@ -179,6 +179,10 @@ type burnchainSection struct {
 	WalletName string `toml:"wallet_name,omitempty"`
 	// MiningPublicKey matches the descriptor's uncompressed public key.
 	MiningPublicKey string `toml:"local_mining_public_key,omitempty"`
+	// RBFIncrement is the miner's block-commit fee-rate bump per replacement, in sat/vB.
+	RBFIncrement int64 `toml:"rbf_fee_increment,omitempty"`
+	// MaxRBF caps a replaced commit's fee rate as a percentage of FeeRate.
+	MaxRBF int64 `toml:"max_rbf,omitempty"`
 	// Epochs copies every frozen activation boundary.
 	Epochs []epochSection `toml:"epochs"`
 }
@@ -301,6 +305,7 @@ func Node(p NodeParameters, secrets NodeSecrets) ([]byte, error) {
 		}
 		d.Burnchain.WalletName = p.WalletName
 		d.Burnchain.MiningPublicKey = public.MiningPublicKey
+		d.Burnchain.RBFIncrement, d.Burnchain.MaxRBF = commitReplacementPolicy(d.Burnchain.FeeRate)
 	}
 	if p.SignerHost != "" {
 		d.Observers = []observerSection{
@@ -365,4 +370,17 @@ func Signer(nodeHost, privateKey, eventToken string) ([]byte, error) {
 		return nil, fmt.Errorf("render native signer configuration")
 	}
 	return data, nil
+}
+
+// commitReplacements is how many times a miner may raise its block-commit fee within one
+// Bitcoin block. Core replaces the commit whenever its tenure gains a block, so at a 60-second
+// cadence a miner wants tens of replacements; Core's defaults (+5 sat/vB, 150%) allow one at
+// 2 sat/vB, leaving later commits on stale tips that signers can reject.
+const commitReplacements = 64
+
+// commitReplacementPolicy returns a 1 sat/vB increment and a max_rbf percentage that permits at
+// least commitReplacements of them above rate. Core refuses a replacement once the current rate
+// exceeds rate*max_rbf/100.
+func commitReplacementPolicy(rate int32) (increment, percent int64) {
+	return 1, 100 + (100*commitReplacements+int64(rate)-1)/int64(rate)
 }

@@ -510,7 +510,9 @@ identity account (see [instance identity ownership](#stacksnetworkparticipant)).
 stable P2P identity, not automatic stacking or STX spending. `bitcoinNodeRef` is required;
 changing this binding requires a new participant.
 `mining` is optional (disabled); enabled miners require a wallet loaded by the selected
-Bitcoin node and matching the miner key. Fee rate is positive and mutable. mining.enabled can
+Bitcoin node and matching the miner key. Fee rate is positive and mutable; it is the starting
+rate of each block commit, which Core may replace at least 64 times per Bitcoin block in
+1 sat/vB steps (`rbf_fee_increment`, `max_rbf`) as the tenure grows. mining.enabled can
 toggle live and rolls that node's config/Pod; identity, Bitcoin-node and wallet bindings stay
 fixed once admitted. A future miner must declare its explicit identity and
 mining.bitcoinWalletRef even while disabled. Enabling waits for the matching loaded wallet and
