@@ -73,6 +73,11 @@ func (s *Scheduler) SetupWithManager(m ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(s.enqueue),
 			builder.WithPredicates(schedulerEvents()),
 		).
+		Watches(
+			&api.StacksNetworkParticipant{},
+			handler.EnqueueRequestsFromMapFunc(s.enqueueTenureProgress),
+			builder.WithPredicates(tenureViewEvents()),
+		).
 		Complete(s)
 }
 

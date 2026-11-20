@@ -1,12 +1,16 @@
 package bitcoincontrol
 
 import (
+	"context"
 	"time"
 
 	bitcoin "github.com/cylewitruk-stacks/stacks-k8s/apis/network/bitcoin/v1alpha2"
 	api "github.com/cylewitruk-stacks/stacks-k8s/apis/network/v1alpha2"
 	"github.com/cylewitruk-stacks/stacks-k8s/operators/network/internal/foundation"
 	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
@@ -58,4 +62,62 @@ func schedulerEvents() predicate.Predicate {
 		}
 		return true
 	}}
+}
+
+// tenureViewEvents passes Stacks node updates that change the protocol facts tenure pacing
+// reads; observation timestamps and other status refreshes are ignored.
+func tenureViewEvents() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return false },
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			a, okA := e.ObjectOld.(*api.StacksNetworkParticipant)
+			b, okB := e.ObjectNew.(*api.StacksNetworkParticipant)
+			return okA && okB && b.Spec.Kind == api.ParticipantStacksNode &&
+				!equality.Semantic.DeepEqual(tenureView(a), tenureView(b))
+		},
+	}
+}
+
+// pacedView is the part of a protocol observation that tenureObserved compares.
+type pacedView struct {
+	Available         bool
+	BurnHeight        uint64
+	BurnConsensusHash string
+	Tenure            *api.StacksTenureObservation
+}
+
+func tenureView(p *api.StacksNetworkParticipant) *pacedView {
+	if p.Status.Runtime == nil || p.Status.Runtime.Protocol == nil {
+		return nil
+	}
+	view := p.Status.Runtime.Protocol
+	return &pacedView{view.Available, view.BurnHeight, view.BurnConsensusHash, view.Tenure}
+}
+
+// enqueueTenureProgress wakes a scheduler that is waiting for tenure progress when a captured
+// miner's view changes. The continuation timer still bounds expiry and recovery; this only
+// shortens the wait, and the scheduler re-reads every miner before advancing.
+func (s *Scheduler) enqueueTenureProgress(ctx context.Context, obj client.Object) []ctrl.Request {
+	requests := s.enqueue(ctx, obj)
+	if len(requests) == 0 {
+		return nil
+	}
+	record := &bitcoin.BitcoinInitialization{}
+	if s.Client.Get(ctx, requests[0].NamespacedName, record) != nil ||
+		record.Status.Reason != reasonAwaitingTenureProgress {
+		return nil
+	}
+	genesis := &api.StacksGenesis{}
+	key := client.ObjectKey{Namespace: record.Namespace, Name: record.Spec.Genesis.Name}
+	if s.Client.Get(ctx, key, genesis) != nil || genesis.UID != record.Spec.Genesis.UID {
+		return nil
+	}
+	for _, required := range genesis.Spec.Bootstrap.Requirements {
+		if required.Participant.UID == obj.GetUID() && ptr.Deref(required.MiningEnabled, false) {
+			return requests
+		}
+	}
+	return nil
 }

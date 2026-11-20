@@ -121,6 +121,8 @@ when the target's last receipt is the generation of N. Cadence still sets the mi
 interval, and an expired wait relaxes no other advancement check. `status.tenurePacing`
 on BitcoinInitialization counts each block once as `Progressed`, `Expired` or `Unbound`
 (no matching own receipt) and reports the last block's delay beyond its cadence.
+While the scheduler waits, a change in a captured miner's observed availability, Bitcoin
+tip or tenure wakes it; its continuation timer still bounds expiry and recovery.
 This follows Core's signer tests, which mine the next block only after the tenure's
 first block; it does not check that miners' commits for N+1 have reached the producer.
 Baseline production after initialization is not paced.

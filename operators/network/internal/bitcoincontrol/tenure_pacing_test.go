@@ -189,13 +189,29 @@ func TestTenureProgressReleasesBootstrapAdvancementWithoutWaiting(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
+	wakes := func(obj client.Object) bool {
+		t.Helper()
+		return len(scheduler.enqueueTenureProgress(ctx, obj)) == 1
+	}
+	if wakes(actor) {
+		t.Fatal("a miner view woke a scheduler that is not waiting for tenure progress")
+	}
 	observe(strings.Repeat("b", 64))
 	f.reconcile(t, scheduler)
 	if got := f.readInitial(t).Status.Reason; got != reasonAwaitingTenureProgress {
 		t.Fatalf("a tenure from another block released advancement: %s", got)
 	}
+	if !wakes(actor) {
+		t.Fatal("a captured miner's view did not wake the waiting scheduler")
+	}
+	if wakes(f.node) {
+		t.Fatal("a participant that is not a captured miner woke the scheduler")
+	}
 	observe(tip)
 	advance(285)
+	if wakes(actor) {
+		t.Fatal("a miner view woke the scheduler after tenure progress released it")
+	}
 	pacing := f.readInitial(t).Status.TenurePacing
 	if pacing == nil || pacing.Unbound != 1 || pacing.Progressed != 1 || pacing.Expired != 0 ||
 		pacing.Tip != tip || pacing.Outcome != bitcoin.TenurePacingProgressed {
