@@ -40,6 +40,11 @@ updates:
     schedule:
       interval: weekly
 
+  - package-ecosystem: gomod
+    directory: /tools/crd-reference
+    schedule:
+      interval: weekly
+
   - package-ecosystem: docker
     directory: /operators/network
     schedule:

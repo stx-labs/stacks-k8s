@@ -64,6 +64,9 @@ and after the intervention. Replacements can match the same labels.
   Bitcoin observer sidecar. The observer and Greptime run in
   `stacks-observation-system`; faulting that namespace can disrupt recording
   for every network.
+- A Stacks node whose RPC stalls under a fault leaves its Services after about 15
+  seconds of failed readiness probes, cutting off peers that use them; see
+  [readiness gating](../network-operator/operations.md#readiness-gating).
 - The recorder journals attributable fault objects in its enrolled network
   namespace. Fault objects created elsewhere are outside that network's journal.
 

@@ -47,4 +47,5 @@ jobs:
             operators/observability/go.sum
             operators/action/go.sum
             tools/chart-policy/go.sum
+            tools/crd-reference/go.sum
       - run: make vuln

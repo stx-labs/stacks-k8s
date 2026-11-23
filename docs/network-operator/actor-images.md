@@ -83,6 +83,25 @@ pin builder and runtime base images rather than relying on moving tags.
 docker image inspect "$STACKS_IMAGE" --format '{{.Id}}'
 ```
 
+### Resource budget
+
+Build and load every actor image before creating the network or requesting
+`Running`. kind and image builds share the Docker VM's CPU and memory, and the root
+Dockerfile exposes no build-parallelism setting. Its `release` profile uses fat LTO
+with one codegen unit. In one observed run on a 16 GB VM next to a running network,
+the final link held about 15 CPUs for over 20 minutes, starved the API server
+(`TLS handshake timeout`), then failed with `cannot allocate memory`. The kernel's
+out-of-memory killer also stopped all three kind nodes, losing the initializing
+network; see [recovery after node loss](operations.md#recovery-after-node-loss).
+
+- Stop the cluster with `make cluster-stop` during a full `release` build, then
+  `make cluster-start` before loading the image.
+- For local verification, build with the thin-LTO `release-lite` profile and only the
+  actor packages. The [images skill](../../.agents/skills/stacks-k8s-images/SKILL.md)
+  provides a [wrapper Dockerfile](../../.agents/skills/stacks-k8s-images/assets/release-lite.Dockerfile)
+  that sets the job count; a comparable build took about three minutes. Its codegen
+  and timing differ from release images, so record the profile with any finding.
+
 Loading imports the image into the selected kind cluster; no registry is
 required. `IfNotPresent` uses the loaded image and is already the network default.
 Avoid reusing tags or selecting `Always` for images available only locally. See

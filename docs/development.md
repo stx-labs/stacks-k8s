@@ -234,8 +234,11 @@ make verify
 
 `make generate` runs the isolated generator under `apis/network/tools`, updates
 generated deepcopy code, and writes network and action CRDs directly to their owning charts.
-Generated code and CRDs must be committed with their API source changes; CI
-rejects drift.
+It then renders the per-kind field tables of the agent skills under `.agents/skills`
+from the chart CRDs with `tools/crd-reference`; `skills.go` maps each skill to its
+CRDs. A new reference field also needs its target declared in
+`tools/crd-reference/references.go`. Generated code, CRDs and skill references must be
+committed with their API source changes; CI rejects drift.
 
 `make helm-verify` validates values schemas, renders supported configurations,
 and structurally checks the manager Deployment's security posture. It also

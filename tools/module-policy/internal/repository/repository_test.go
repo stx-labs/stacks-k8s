@@ -13,6 +13,8 @@ import (
 func TestMarkdownLinksResolve(t *testing.T) {
 	root := repositoryRoot(t)
 	link := regexp.MustCompile(`\[[^]]+\]\(([^)]+)\)`)
+	// Inline code spans are literal text, never links.
+	codeSpan := regexp.MustCompile("`[^`\n]+`")
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -32,7 +34,8 @@ func TestMarkdownLinksResolve(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		for _, match := range link.FindAllStringSubmatch(string(content), -1) {
+		text := codeSpan.ReplaceAllString(string(content), "")
+		for _, match := range link.FindAllStringSubmatch(text, -1) {
 			target := strings.Split(match[1], "#")[0]
 			if target == "" || strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
 				continue
