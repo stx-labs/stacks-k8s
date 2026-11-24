@@ -37,7 +37,7 @@ git -C "$STACKS_SOURCE" worktree add --detach "$STACKS_BUILD" "$STACKS_REVISION"
 Make any source changes in that worktree before building. For revisions with
 the current root Dockerfile, which packages both `stacks-node` and
 `stacks-signer`, build and load the image as follows. The platform must match the
-kind nodes; the local qualification environment uses Linux ARM64.
+kind nodes; the commands below assume Linux ARM64.
 
 ```bash
 STACKS_COMMIT=$(git -C "$STACKS_BUILD" rev-parse HEAD)
@@ -68,11 +68,15 @@ requirements and the node architecture explicit. The build arguments populate
 binary version metadata; `GIT_BRANCH` records the selected source ref for this
 detached worktree.
 
-The inspected root Dockerfile enables `monitoring_prom,slog_json` and uses
-`--release`. This builds a new artifact; it does not reproduce the
-[qualified `a12-normal` image](stacks-qualification.md#images-and-inputs), which
-used `release-lite` and a modified checkout. Source changes, build inputs and
-image identity must be qualified separately.
+The stacks-core root Dockerfile enables `monitoring_prom,slog_json` and builds the
+`release` profile (fat LTO, one codegen unit). The `release-lite` profile uses thin LTO;
+its codegen and timing differ, so images built from the two profiles are distinct
+artifacts. Record the profile with any finding, and treat source changes, build inputs
+and image identity as part of the experiment.
+
+To package official release binaries instead of building them, match their C library:
+the stacks-core 4.0.1 release binaries require glibc 2.39 (for example an Ubuntu 24.04
+base); Debian bookworm is too old.
 
 Use a new tag for each distinct build. Record the resolved commit, local patch
 including any new source files, build options/toolchain, and image content ID.
@@ -87,20 +91,18 @@ docker image inspect "$STACKS_IMAGE" --format '{{.Id}}'
 
 Build and load every actor image before creating the network or requesting
 `Running`. kind and image builds share the Docker VM's CPU and memory, and the root
-Dockerfile exposes no build-parallelism setting. Its `release` profile uses fat LTO
-with one codegen unit. In one observed run on a 16 GB VM next to a running network,
-the final link held about 15 CPUs for over 20 minutes, starved the API server
-(`TLS handshake timeout`), then failed with `cannot allocate memory`. The kernel's
-out-of-memory killer also stopped all three kind nodes, losing the initializing
-network; see [recovery after node loss](operations.md#recovery-after-node-loss).
+Dockerfile exposes no build-parallelism setting. Next to a running network on a 16 GB
+Docker VM, the fat-LTO final link can hold about 15 CPUs for over 20 minutes, starve the
+API server (`TLS handshake timeout`) and fail with `cannot allocate memory`. The kernel's
+out-of-memory killer can also stop the kind nodes and lose an initializing network; see
+[recovery after node loss](operations.md#recovery-after-node-loss).
 
 - Stop the cluster with `make cluster-stop` during a full `release` build, then
   `make cluster-start` before loading the image.
 - For local verification, build with the thin-LTO `release-lite` profile and only the
   actor packages. The [images skill](../../.agents/skills/stacks-k8s-images/SKILL.md)
   provides a [wrapper Dockerfile](../../.agents/skills/stacks-k8s-images/assets/release-lite.Dockerfile)
-  that sets the job count; a comparable build took about three minutes. Its codegen
-  and timing differ from release images, so record the profile with any finding.
+  that sets the job count and finishes in minutes rather than tens of minutes.
 
 Loading imports the image into the selected kind cluster; no registry is
 required. `IfNotPresent` uses the loaded image and is already the network default.
@@ -147,4 +149,4 @@ image does not require new genesis; changed genesis inputs do.
 Management-worker placement and process identity have stricter controls than actor
 rollouts. Do not replace a bound stacker, contract or traffic worker as an image
 upgrade experiment; its loss ends the network's managed experiment. See
-[lifecycle](../design/public-api/lifecycle.md).
+[lifecycle](../api/lifecycle.md).

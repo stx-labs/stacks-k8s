@@ -13,11 +13,11 @@ Previously submitted operations are still observed without replay.
 
 The consensus signer, stacker administration and sBTC initialization are separate
 roles. A `stacks-signer` Pod signs consensus messages; it does not administrate its
-holder's stacking transactions. Current sBTC initialization supplies explicit test
-signer material without claiming a running sBTC signer network. That initialization
-boundary can be replaced by a separately implemented real signer capability.
+holder's stacking transactions. sBTC initialization supplies explicit test signer
+material; no sBTC signer network runs. Only direct stacking is supported; delegated
+pool stacking is not.
 
-The [protocol timing contract](../design/public-api/protocol-timing.md) defines
+The [protocol timing contract](../api/protocol-timing.md) defines
 which cycle, contract and signer-set facts release Bitcoin production. The
-[runtime guide](public-api-foundation.md) describes observed conditions and worker
+[runtime guide](runtime.md) describes observed conditions and worker
 failure boundaries. Mainnet activation dates are not replayed by a regtest schedule.

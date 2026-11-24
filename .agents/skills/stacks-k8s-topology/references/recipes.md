@@ -3,7 +3,7 @@
 ## Examples
 
 Complete manifests live in the stacks-k8s repository under
-`docs/design/public-api/examples/`. Envtest strictly admits `minimal.yaml`,
+`docs/api/examples/`. Envtest strictly admits `minimal.yaml`,
 `separate-roles.yaml` and `30-actors.yaml`; the first two also resolve while paused.
 
 | Example | Participants | Shape | Timing |

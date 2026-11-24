@@ -15,7 +15,7 @@ discovery of critical issues beyond conventional tests and static analysis and
 verification of behavior from responsibly reported vulnerability reports.
 Preserve bounded permissions, external-agent orchestration, and evidence
 integrity. See the
-[product goals](docs/design/README.md#product-goals).
+[architecture](docs/architecture.md).
 
 ## Architecture invariants
 
@@ -24,7 +24,7 @@ integrity. See the
   The aggregate controller compiles owned resources; separate capability
   controllers perform initialization, production and protocol maintenance.
   Initialization is convergence toward declared network state, not an external
-  experiment plan. Follow the [steady-state design](docs/design/steady-state-operation.md).
+  experiment plan. Follow the [steady-state model](docs/architecture.md#steady-state-operation).
 - Install the network operator independently of individual networks. The aggregate
   compiles capability resources; capability workload controllers provision scoped
   execution workloads in each network namespace. Keep signing keys out of the

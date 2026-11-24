@@ -1,9 +1,40 @@
-# Continuous network telemetry
+# Observability
 
-`NetworkTelemetry` records a selected `StacksNetwork` in GreptimeDB through scoped
-Go recorders and node-local OpenTelemetry collectors. Installation is optional:
-networks and actions work without it. Agents query retained facts with read-only
-HTTP SQL; MCP integration is low priority. See the [qualified profile and limits](qualification.md).
+The observability operator is an independently installed, passive recorder. It
+serves two resources in `observation.stacks.org`:
+
+- `NetworkObservation` (`v1alpha1`): a one-shot identity snapshot of selected actors;
+  see the [chart README](../../charts/stacks-observability-operator/README.md#one-shot-identity-observation).
+- `NetworkTelemetry` (`v1alpha2`): continuous recording of a selected `StacksNetwork`
+  in GreptimeDB through scoped Go recorders and node-local OpenTelemetry collectors.
+
+Installation is optional: networks and actions work without it. Agents query
+retained facts with read-only HTTP SQL against the backend.
+
+## Design boundary
+
+The operator is read-only with respect to observed networks, actions and workloads.
+It writes only its own resources, status, recording workloads and the configured
+backend. Collection uses administrator-configured sources at fixed, bounded rates;
+nothing escalates capture in response to actions, and the operator never schedules an
+experiment, replay, diagnosis or follow-up action. Before/during/after views are
+query-time correlation over continuously collected facts, made by the agent.
+
+Distributed execution is not claimed deterministic. Records state what was requested
+and observed, with provenance and explicit gaps, not what must happen on another run.
+
+`NetworkTelemetry` status has two writers using minimal server-side apply payloads.
+The controller owns `status.admitted`, `status.tablePrefix` and conditions. The
+recorder owns only `status.recording`: its Pod UID, admitted generation, heartbeat,
+latest backend acknowledgement and bounded source summaries. No data stream is kept
+in CRDs.
+
+| Rejected alternative | Reason |
+| --- | --- |
+| Events or logs in CRD status | Volume and update churn do not belong in etcd. |
+| Kubernetes Events as history | Lossy, rate-limited and retention-dependent. |
+| Observer-driven capture triggers | The agent decides when it needs data. |
+| Observer replay or diagnosis API | Orchestration and reasoning belong to the agent. |
 
 ## Installation
 
@@ -58,6 +89,10 @@ The pinned backend is GreptimeDB 1.2.0 (upstream chart 0.4.14), with a 10 GiB PV
 a separate 1 GiB shared table-scan pool.
 It requires the local
 cluster's storage provisioner. This is a single-instance development backend.
+For orientation, a 30-actor network at a 5-second Bitcoin cadence, sampled locally over
+30 minutes, peaked at about 310 MiB / 180m CPU for Greptime and about 120 MiB / 40m per
+node collector, with about 91 MiB of disk. These are local samples, not a capacity
+benchmark or safe minimum limits.
 
 A bounded post-install/post-upgrade Job runs `/backend-init` from the operator image.
 It mounts the existing administrator credential and has no Kubernetes API token or
@@ -80,14 +115,19 @@ A missing-authorization-header toast before login means a data query was sent
 without credentials; serving the UI does not bypass query authentication.
 The page and HTTP API share port 4000: this exposes the backend HTTP interface,
 not just static UI assets.
-No separate Perses deployment or background port-forward is required. See the
-[dashboard qualification](dashboard-qualification.md) for tested lifecycle behavior. Host exposure
+No separate Perses deployment or background port-forward is required. Host exposure
 is loopback-only with our kind mapping; NodePort remains reachable on cluster nodes.
 
 Set `dashboard.enabled=false` to remove the NodePort Service while keeping the
 backend and its internal Service. Changing `dashboard.nodePort` also requires a
 matching kind host mapping. Changing an existing Docker mapping requires cluster
 recreation. The mapping survives `make cluster-stop` / `make cluster-start`.
+After `make cluster-start`, wait for the Greptime Pod to be Ready before querying;
+node readiness precedes backend readiness, and early queries time out.
+
+Without the kind mapping, reach the backend Service with `kubectl port-forward`.
+That requires Pod discovery plus `create` on `pods/portforward` in the backend
+namespace, and exposes the whole backend HTTP interface to the forwarding client.
 
 ### Independently managed backend
 
@@ -187,7 +227,7 @@ stops controller reconciliation; delete its telemetry resources before unenrolli
 | --- | --- | --- |
 | Kubernetes list/watch | Root, participant, genesis, Bitcoin execution, action and native fault objects; Pods and attributable Events | Snapshots are current state, not missed transitions. Missing optional APIs produce unavailable coverage. Events are attributed only after their object UID is known. |
 | Container logs | Bounded stdout/stderr with Kubernetes-derived network, participant and Pod identity | Missing Pod metadata is filtered rather than guessed. Actor text remains an actor claim. |
-| Native metrics | Named `metrics` ports on selected Pods, scraped once per node every 3 seconds | Scrape labels and scrape time come from the collector; metric values are actor reports. Unsupported images and unreachable endpoints do not produce native samples. |
+| Native metrics | Named `metrics` ports on selected Pods, scraped once per node every 3 seconds | Scrape labels and scrape time come from the collector; metric values are actor reports. Actor labels that collide with collector identity labels are kept as `exported_*`, and actor sample timestamps are replaced by scrape time. Unsupported images and unreachable endpoints do not produce native samples. |
 | Container resources | Actor-container CPU and memory from the namespace-scoped Metrics API | Samples retain Pod and participant UID. Metrics Server is required for this mandatory source. The recorder polls every 15 seconds; Metrics Server controls source resolution, and repeated samples are deduplicated. CPU throttling is not exposed by this source. |
 | Collection health | Recorder heartbeats, watch/export gaps, collector session changes and failure counters | A gap indicates possible loss or duplicates, not an exact missing-record count. |
 
@@ -207,7 +247,7 @@ Use the [Bitcoin-specific queries](bitcoin-observer-queries.sql) for this option
 `backendReady` describes the recorder's latest export acknowledgement, not every collector
 pipeline. Heartbeats assert recent activity, not uninterrupted coverage. Missing ready
 collectors on active actor nodes make collector coverage unavailable, including nodes excluded
-by custom taints. The local profile tolerates only the control-plane taint. Source `observedAt`
+by custom taints. Collectors tolerate only the control-plane taint. Source `observedAt`
 is the latest source health observation, not a complete-history watermark. A quiet watch may
 have an older timestamp until a bookmark or reconnect. Collector metrics provide queue/failure
 detail.
@@ -248,7 +288,7 @@ Use a dedicated backend initialized with this profile; verify table TTLs before
 reusing an existing database. TTL is neither a per-network byte quota nor immediate
 physical reclamation. The PVC and resource limits bound the installation; monitor
 storage pressure. The 1 GiB execution and scan pools support post-experiment analysis but do
-not make unbounded scans safe. Per-network byte quotas are not exposed in this slice.
+not make unbounded scans safe.
 
 Logs and object records promote `network_uid`, `participant_uid`, `pod_uid`, `object_uid`,
 `event_type` and `source` into tags. Resource source IDs use `resource.group/version`, with
@@ -296,14 +336,29 @@ fault bodies, headers, queries, scripts and JVM rule data are omitted from
 recorded object rows. This bounded redaction policy does not guarantee that
 arbitrary custom fields are credential-free; retain the original manifest
 separately when its inputs matter.
-For an existing observability installation, apply the updated chart CRD before
-rolling the recorder; Helm does not upgrade files under `crds/`.
 Native last-block cost gauges are point-in-time ratios of configured block limits. They
 may be overwritten between scrapes and must not be summed as per-block accounting.
 Use exact transaction observations for short inclusion-latency investigations; histogram
 buckets may be too coarse for regtest timing.
-The first slice uses backend-native SQL; custom query services, `EvidenceExport`,
-distributed tracing and additional native protocol polling remain future work.
+
+## Current limits
+
+- Queries go directly to GreptimeDB HTTP SQL with backend credentials, bypassing
+  Kubernetes authentication and RBAC. The reader account can read every recording in
+  the database; there is no per-network query authorization or bounded query service.
+- There is no in-cluster export resource. Use the
+  [`stacks-evidence` bundle](../../tools/stacks-evidence/README.md#portable-evidence-bundles)
+  for offline export; it reports capture coverage as `Unknown` rather than classifying it.
+- Desired-operation resources (`BitcoinBlockProduction`, `BitcoinBlockScheduleOverride`,
+  `BitcoinInitialization`, `StacksFaucetRequest`) are not recorded, so production timing
+  changes, overrides and faucet requests are absent from the object journal.
+- Recording is snapshot/watch based, not a loss-detecting audit journal.
+- Per-network byte quotas and retention profiles beyond the TTL choices are not provided.
+- Distributed tracing and protocol polling beyond native metrics and the Bitcoin RPC
+  observer are not provided.
+- `greptimedb-mcp-server` (0.5.2) fails with the read-only account: its MySQL session
+  setup runs `SET @@session.autocommit`, which GreptimeDB rejects for that account, so
+  even `SELECT` fails. Use HTTP SQL. Never give investigation clients write credentials.
 
 ## Cleanup
 
@@ -326,7 +381,7 @@ make -C deploy/telemetry uninstall
 This retains the database PVC. Delete the PVC or backend namespace separately only
 when its retained telemetry is no longer needed. Leave the shared kind cluster running.
 
-## Backend contract qualification
+## Live backend tests
 
 With the backend HTTP endpoint reachable and the protected credential file available, run the
 opt-in ingestion/query test. It creates one TTL-limited test table and checks
@@ -348,5 +403,5 @@ the same endpoint/auth-file variables, and `STACKS_TELEMETRY_PREFIX`, `NETWORK_U
 executes every documented template, requires nonempty results, verifies both `up=0`
 and `up=1` for the selected target, and checks nonempty resource versions in the
 deduplicated inventory. Synthetic canary results are ingestion evidence, not protocol
-qualification. `make verify` checks component references and shared policy rendering;
+evidence. `make verify` checks component references and shared policy rendering;
 `make docker-check` also validates all source combinations with the pinned collector.

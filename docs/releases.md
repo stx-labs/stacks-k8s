@@ -1,10 +1,58 @@
 # Releases
 
-The three operators are independently versioned products in one repository.
-Each release updates its chart `version`, chart `appVersion`, image tag, and
-operator release notes together.
+## Products
 
-Use component-prefixed product tags:
+The three operators are independently installed and versioned products in one
+repository. Each chart owns only its CRDs and RBAC.
+
+| Product | Responsibility | Dependency direction |
+| --- | --- | --- |
+| `apis/network` module | Versioned Kubernetes API types for the `network`, `bitcoin`, `stacks` and `actions` groups | Kubernetes API machinery only |
+| `stacks-network-operator` | Topology, baseline Bitcoin production, Stacks operation and their scoped workers; network, Bitcoin and Stacks CRDs, including `BitcoinBlockScheduleOverride` | `apis/network`, `libs/stacks`, `libs/bitcoin` |
+| `stacks-action-operator` | Bounded action lifecycles; `BitcoinBlockGeneration` and `BitcoinReorganization` CRDs | `apis/network`; requires the network operator, whose worker executes the RPC |
+| `stacks-observability-operator` | Passive identity observation and telemetry recording; `NetworkObservation` and `NetworkTelemetry` CRDs; optional bundled GreptimeDB | `apis/network`; reads network, action and Chaos Mesh APIs without importing their runtime code |
+| Chaos Mesh | Native infrastructure faults | External optional upstream chart |
+
+The network chart is useful alone: baseline operation needs no action, Chaos Mesh or
+observability installation. The observability operator starts
+without optional action or Chaos Mesh CRDs and reports their absence as unavailable
+sources. Investigation tools under `tools/stacks-*` are independent Go modules, not
+operator runtime dependencies.
+
+## CRDs
+
+- CRDs are generated from API types and committed into their owning chart.
+- CRDs are cluster-wide even for namespaced objects. Namespace isolation does not
+  permit incompatible versions of one CRD in a cluster.
+- Each API serves one alpha version. The network chart refuses to install over
+  existing network CRDs that serve another version.
+- Helm installs files under `crds/` only on first installation and performs no API
+  conversion. Apply changed CRDs explicitly before upgrading; see
+  [installation compatibility](network-operator/migration.md).
+- Chaos Mesh CRDs come from its upstream chart and are never copied.
+
+No external version-skew compatibility is claimed. Document the network API and
+contract versions accepted by each observability and action release.
+
+## Image and Git-source boundary
+
+Operators accept immutable OCI image references. They never clone repositories or
+run build scripts. An external agent or CI system:
+
+1. checks out the chosen repository and revision;
+2. builds and scans the image outside operator trust;
+3. pushes it to an accessible registry, or loads it into the local kind cluster;
+4. records its content identity (pinning published images by digest); and
+5. patches the relevant actor image and configuration reference.
+
+See the [local actor image workflow](network-operator/actor-images.md) for revision
+selection, unique local tags and mixed-version updates. Recorded image metadata is
+not an attestation that the image matches a source revision.
+
+## Versioning
+
+Each release updates its chart `version`, chart `appVersion`, image tag and release
+notes together. Use component-prefixed product tags:
 
 ```text
 stacks-network-operator/v0.1.0
@@ -17,24 +65,19 @@ match its repository subdirectory instead:
 
 ```text
 apis/network/v0.1.0
+libs/stacks/v0.1.0
 operators/network/v0.1.0
-operators/observability/v0.1.0
-operators/action/v0.1.0
 ```
 
-Publish Go module tags in dependency order: `apis/network`, then
-`operators/action`, then `operators/network`. The network module’s paired tests
-require the action module tag even though its production binary does not import
-the action runtime. The observability module has no dependency on that pair.
-Repository builds use a local `replace`, but published consumers ignore that
-directive and must be able to resolve the declared API tag. The API module
-depends only on Kubernetes API machinery and follows the network API's
-compatibility lifecycle; it never includes controller implementations.
+Publish module tags in dependency order: `apis/network`, `libs/bitcoin` and
+`libs/stacks` before the operator and tool modules that require them. Repository
+builds use local `replace` directives, but published consumers ignore them and must
+resolve the declared versions. The API module never includes controller
+implementations.
 
-Operator binaries are distributed as signed container images through their
-Helm charts. Version-qualified `go install` is not a supported distribution
-path because repository builds intentionally use a local API-module
-replacement.
+Operator binaries are distributed as container images through their Helm charts.
+Version-qualified `go install` is not supported because repository builds rely on
+the local replacements.
 
 Before tagging:
 
@@ -44,44 +87,26 @@ Before tagging:
 4. install the packaged chart in a clean cluster and exercise its examples;
 5. publish each chart independently as an OCI artifact.
 
-Repository placement does not imply compatibility across arbitrary operator
-versions. Document the network API and inventory-contract versions accepted by
-each observability release.
+No repository workflow publishes images or charts, or produces signatures, SBOMs or
+provenance; CI runs verification, security and dependency-review workflows only.
+
+## Current versions
+
+The network and observability charts are at `0.2.0`; the action chart is at `0.1.0`.
+Chart default controller image tags are `dev` for network and action and `0.1.0` for
+observability. The Bitcoin observer image is pinned once in the network chart
+[values.yaml](../charts/stacks-network-operator/values.yaml), independently of the
+controller tag; local builds must load that image or override `bitcoinObserverImage`.
+Unpublished incompatible chart or schema changes require fresh test installations.
 
 ## Worker artifacts
 
-The network image contains its operator/resolver entrypoint and scoped Go worker
-binary. Qualify controller and worker images with the same API/chart version and
-selected actor profile. Bitcoin control and Stacks management have different restart
-contracts; do not infer a safe management-worker restart from an operator rollout.
+The network image contains its operator/resolver entrypoint, the scoped Go worker
+binary and the Bitcoin observer. Test controller and worker images with the same
+API/chart version and selected actor profile. Bitcoin control and Stacks management
+have different restart contracts; do not infer a safe management-worker restart from
+an operator rollout.
 
 `operators/network/transactions` is an offline SDK oracle only. Include its pinned
 test dependencies in repository auditing, but do not package Node.js in runtime
-images. Publish `libs/stacks` and `libs/bitcoin` before consumers that require their module versions.
-
-Unpublished incompatible chart/schema changes require fresh test installations.
-See [installation compatibility](network-operator/migration.md) for explicit CRD
-handling; Helm does not perform API conversion or schema upgrades automatically.
-
-## Prepared 0.2.0 changes
-
-Network and observability charts/appVersions are prepared as 0.2.0; the action operator
-version is unchanged. Development controller image tags remain `dev` until publication.
-The observer pin is declared once in the network chart
-[values.yaml](../charts/stacks-network-operator/values.yaml). Local builds must load that
-image or explicitly override `bitcoinObserverImage`, independently of the controller tag.
-
-Network changes include optional read-only Bitcoin observer sidecars, independent image
-selection, attributed burnchain diagnostic status and opt-in first-gate Bitcoin generation
-batching (`initialization.batchGeneration`). Observability changes include
-mandatory actor resource samples, native fault sources, resilient watch reconnection and
-the larger local query profile. Apply generated CRD schema updates explicitly before
-upgrading; Helm does not upgrade bundled CRDs. These are prepared versions, not a claim
-that images or charts have been published.
-
-The observability module uses gRPC 1.83.1 to address
-[GO-2026-6348](https://pkg.go.dev/vuln/GO-2026-6348). Existing installations need a
-rebuilt image and rollout to receive the fix. Repository tools include independent
-[protocol inspection](../tools/stacks-inspect/README.md) and
-[experiment preflight](../tools/stacks-preflight/README.md) commands; neither is an
-operator runtime dependency.
+images.

@@ -6,16 +6,8 @@ optional action operator only tracks their lifecycle.
 
 ## Install
 
-Both sides must be enabled. On the cluster-wide network operator release (see the
-`stacks-k8s-cluster` skill), add the executor permissions:
-
-```bash
-helm upgrade network charts/stacks-network-operator -n stacks-network-system --reuse-values \
-  --set bitcoinActions.generationEnabled=true \
-  --set bitcoinActions.reorganizationEnabled=true
-```
-
-Then install the action operator **in the network namespace**:
+Both sides must be enabled. Install the action operator **in the network namespace**
+first, since its chart ships the action CRDs:
 
 ```bash
 TAG="dev-$(git rev-parse --short HEAD)-$(date +%s)"
@@ -25,6 +17,18 @@ helm upgrade --install actions charts/stacks-action-operator -n lab-x \
   --set image.repository=stacks-action-operator --set image.tag="$TAG" \
   --set bitcoinReorganization.enabled=true
 ```
+
+Then add the executor permissions on the cluster-wide network operator release (see the
+`stacks-k8s-cluster` skill):
+
+```bash
+helm upgrade network charts/stacks-network-operator -n stacks-network-system --reuse-values \
+  --set bitcoinActions.generationEnabled=true \
+  --set bitcoinActions.reorganizationEnabled=true
+```
+
+Enabling the network values while the action CRDs are absent stops baseline Bitcoin
+production: the control worker's action list fails before it serves the baseline offer.
 
 Omit the two reorganization flags when only generation is needed; the action chart
 enables generation by default. A request whose kind is not enabled on both sides stays

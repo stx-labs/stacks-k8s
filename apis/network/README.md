@@ -9,10 +9,9 @@ Its minimum supported Go version follows its Kubernetes API dependencies;
 direct repository development uses the preferred toolchain declared in
 `go.mod`.
 
-The Bitcoin API separates aggregate-owned `BitcoinBlockProduction` scheduling
-from internal `BitcoinProductionTarget` execution ledgers. The network chart
-serves both CRDs; the action operator reads their retained ownership and
-reservation facts without writing them.
+The Bitcoin API separates `BitcoinBlockProduction` scheduling from per-target
+`BitcoinExecution` records. The network chart serves both CRDs; the action
+operator reads execution reservations without writing them.
 
 Run generation and verification from the repository root:
 

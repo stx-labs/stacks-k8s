@@ -2,7 +2,7 @@
 
 This opt-in Go test drives the `v1alpha2` baseline through public Kubernetes APIs.
 It loads the documented [30-actor
-declarations](../../../../docs/design/public-api/examples/30-actors.yaml),
+declarations](../../../../docs/api/examples/30-actors.yaml),
 creates a fresh namespace, and applies reusable declarations before the network.
 No existing namespace is adopted. The default `minimal14` variant selects three
 Bitcoin nodes, one miner, two signer nodes, two signers, two stackers, production,

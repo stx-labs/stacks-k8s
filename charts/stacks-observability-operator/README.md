@@ -19,9 +19,8 @@ Changing enrollment does not delete existing collectors. Remove `NetworkTelemetr
 resources before unenrolling a namespace. The backend is independent of recordings;
 a bundled backend shares this Helm release lifetime.
 Helm installs files in `crds/` only on first installation. Before upgrading an
-existing release to the expanded Chaos Mesh watch inventory, apply the generated
-`crds/observation.stacks.org_networktelemetries.yaml` with the intended context;
-`status.recording.sources` must allow 48 entries before the new recorder runs.
+existing release, apply the generated `crds/*.yaml` with the intended context; the
+current recorder requires `status.recording.sources` to allow 48 entries.
 Objects-only recordings create no node collectors. Log-enabled OTel collectors use
 host log mounts and UID-scoped node checkpoint directories;
 the node-local process runs as root to read container logs, drops all capabilities
@@ -69,8 +68,7 @@ dependency does not adopt an already installed backend from another Helm release
 
 Run source-checkout commands from the repository root.
 
-The default `0.1.0` image reference becomes usable when that release is
-published. For an unpublished checkout, build and load a local image first:
+For a source checkout, build and load a local image first:
 
 ```bash
 docker build \

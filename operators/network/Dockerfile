@@ -4,7 +4,6 @@ WORKDIR /src
 COPY libs/bitcoin/go.mod ./libs/bitcoin/
 COPY libs/stacks/go.mod libs/stacks/go.sum ./libs/stacks/
 COPY apis/network/go.mod apis/network/go.sum ./apis/network/
-COPY operators/action/go.mod operators/action/go.sum ./operators/action/
 COPY operators/network/go.mod operators/network/go.sum ./operators/network/
 RUN --mount=type=cache,target=/go/pkg/mod cd operators/network && go mod download
 COPY libs/bitcoin ./libs/bitcoin

@@ -29,9 +29,8 @@ It selects participants, freezes genesis and requests operation.
 ## Status
 
 Check conditions `Resolved`, `Initialized`, `Running`, `Operational` and `Failed`, not
-phase alone. `status.participants[]` maps entry names to generated participant UIDs.
-`status.identities` records every participant name ever allocated; names cannot be
-reused.
+phase alone. `status.identities[]` maps every participant name ever allocated to its
+generated participant UID; names cannot be reused.
 
 ## Updates
 

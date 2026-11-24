@@ -427,7 +427,7 @@ func verifyExampleResolves(
 
 func admitExample(t *testing.T, ctx context.Context, c client.Client, name string) int {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "..", "docs", "design", "public-api", "examples", name)
+	path := filepath.Join("..", "..", "..", "..", "docs", "api", "examples", name)
 	// #nosec G304 -- Path is derived from repository fixtures or a private test directory, not a remote request.
 	file, err := os.Open(path)
 	if err != nil {
