@@ -16,7 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 )
 
-const defaultFixture = "../../../../docs/design/public-api/examples/30-actors.yaml"
+const defaultFixture = "../../../../docs/api/examples/30-actors.yaml"
 
 // fixtureOptions changes only test declaration inputs, never generated runtime resources.
 type fixtureOptions struct {

@@ -3,7 +3,7 @@
 Install the [network chart](../../charts/stacks-network-operator/README.md) once.
 Use a fresh namespace for each independent experiment, load the selected actor
 images, and apply reusable inputs together with `StacksNetwork/network`.
-The [30-actor example](../design/public-api/examples/30-actors.yaml) starts paused
+The [30-actor example](../api/examples/30-actors.yaml) sets `operation: Paused`
 so images, placement and resolved inputs can be inspected before genesis capture.
 
 ## Desired operation
@@ -20,7 +20,7 @@ It does not stop actor consensus or networking. Set `Running` to resume.
 `Stopped` is terminal for that network: workers drain and actors scale to zero
 with confirmed termination. A stopped network cannot be resumed; create a new
 root after deletion. Participant-level controls are workload-specific; see
-[lifecycle controls](../design/public-api/lifecycle.md).
+[lifecycle controls](../api/lifecycle.md).
 
 Reapplying a manifest also reapplies its `operation`; a manifest containing
 `Paused` pauses an already running network. Edit the desired declaration rather
@@ -32,19 +32,22 @@ than modifying generated Pods, configurations or admitted status directly.
 of frozen protocol gates. `Operational` requires fresh native chain/transaction
 progress and required contract postconditions. Independent attributed Bitcoin/miner
 height samples in `status.burnchainObservations` aid diagnosis without gating Operational.
-A Ready Pod is not proof of consensus
-progress. Examine root conditions, participant admission/workload/execution,
-Bitcoin records and worker logs when initialization stops advancing.
+A Ready Pod is not proof of consensus progress. Examine root conditions, participant
+admission/workload/execution, Bitcoin records and worker logs when initialization stops
+advancing. Initialization time depends on the Bitcoin cadence; see
+[Bitcoin production](bitcoin-production.md#cadence-and-targets). The
+[runtime limits](runtime.md#limits) describe known stalls.
 
 Stacks management-worker loss fails the experiment. Preserve relevant evidence,
 then recreate the network. No replacement worker guesses a nonce or resends an
 uncertain transaction. Bitcoin ambiguity closes the affected target; it does not
-claim that an interrupted RPC stopped executing.
+claim that an interrupted RPC stopped executing. See
+[execution records](bitcoin-production.md#execution-records).
 
 Actor Pods validate their rendered configuration in a `config-check` init container
 that discards the native command's output, so its logs are empty when validation fails.
 A common cause is an operator checkout older than the selected actor image: run the
-operator from current `main` or a release qualified for that image.
+operator from current `main` or a release that supports that image.
 
 ## Reaching actors
 
@@ -73,6 +76,26 @@ nodes without such a gate would not. Bitcoin `p2p` Services publish not-ready
 addresses. Reach a stalled Stacks node directly at `status.runtime.podIP`, port 20443
 (RPC) or 20444 (P2P), and account for the gating when attributing lost connectivity.
 
+### Suspending an actor process
+
+To freeze an actor process, for example to simulate a Core RPC outage, send `SIGSTOP`
+and later `SIGCONT` to its host PID from the kind node running the Pod. `kill -STOP 1`
+inside the container has no effect: a PID-namespace init ignores signals it does not
+handle.
+
+```bash
+pod=<actor-pod>
+node=$(kubectl -n lab-30 get pod "$pod" -o jsonpath='{.spec.nodeName}')
+cid=$(kubectl -n lab-30 get pod "$pod" \
+  -o jsonpath='{.status.containerStatuses[?(@.name=="bitcoin")].containerID}')
+pid=$(docker exec "$node" crictl inspect --output go-template \
+  --template '{{.info.pid}}' "${cid#containerd://}")
+docker exec "$node" kill -STOP "$pid"   # resume: kill -CONT "$pid"
+```
+
+Use container `stacks-node` or `stacks-signer` for Stacks actors. Suspension creates no
+Kubernetes object, so record its timing yourself.
+
 ## Removal and cleanup
 
 Removing a participant entry destroys its runtime; its name cannot be reused
@@ -93,7 +116,7 @@ kubectl -n lab-30 get stacksnetworkparticipants,pods,persistentvolumeclaims
 
 Review retained PVCs before deleting the namespace. Namespace deletion also
 removes reusable accounts and definitions. Keep the local kind cluster running;
-uninstall per-experiment action/observation/profile releases after their resources
+uninstall per-experiment action or observability releases after their resources
 have finished cleanup. Do not remove finalizers to manufacture successful shutdown.
 
 ## Recovery after node loss
@@ -105,6 +128,6 @@ a process that never started is not yet confirmed, so the
 `network.stacks.org/actor-termination` finalizer holds those Pods: `Stopped` never
 completes and a deleted root stays `Destroying`.
 
-There is no supported recovery for such a network yet. Do not remove finalizers.
+There is no supported recovery for such a network. Do not remove finalizers.
 Record the namespace and its state as abandoned, leave it in place, and continue in a
 fresh namespace with a new root. Recreating the cluster removes abandoned namespaces.

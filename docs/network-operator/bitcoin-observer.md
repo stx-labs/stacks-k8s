@@ -128,6 +128,3 @@ in-record sampling timestamps serve different purposes; retain both. Exporter re
 resets its counters and last-success state. Pod replacement produces a new Pod UID;
 collection does not infer continuity or actor health from missing samples. Actor shutdown
 requires confirmed termination of both Core and its observer container.
-
-See the [qualification record](bitcoin-observer-qualification.md) for exercised paths
-and limits.

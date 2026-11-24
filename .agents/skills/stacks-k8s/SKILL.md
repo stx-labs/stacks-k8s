@@ -52,5 +52,4 @@ Distinguish reproducible inputs from best-effort dispatch and uncontrolled distr
 behavior. Report observed effects, counterexamples and uncertainty; separate designed
 protocol behavior (such as a halt after a missed PoX anchor) from the effect under
 test. Do not claim deterministic replay, causal minimality or a vulnerability from one
-run. See the [qualification evidence](../../../docs/observability/investigation-tools-qualification.md)
-for demonstrated limits.
+run.

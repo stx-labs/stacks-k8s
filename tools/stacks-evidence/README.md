@@ -126,5 +126,5 @@ redaction boundary and does not guarantee arbitrary actor text contains no secre
 Keep workload JSONL receipts alongside the bundle; their association with a network
 is supplied by the external experimenter, not inferred by this tool.
 
-See the [live qualification](../../docs/observability/evidence-export-qualification.md)
-for measured traversal and retained capture gaps.
+See the [observability guide](../../docs/observability/README.md) for export sizing and
+capture-gap semantics.

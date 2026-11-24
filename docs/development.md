@@ -112,9 +112,7 @@ storage, or native fault injection. Helm lint also targets 1.37.0 in every chart
 Use the selected standalone kind cluster for live testing, with fresh namespaces
 and explicit kubeconfig/context selection. Cluster creation is separate from
 repository verification. The Helm `kubeVersion` constraints are API minimums,
-not a tested-version matrix. Earlier qualification records retain their original
-Kubernetes versions. See the [1.37 live qualification](local-cluster-qualification.md)
-for cross-node native fault results and the unresolved Stacks recovery limit.
+not a tested-version matrix.
 
 ## Local kind cluster
 
@@ -210,9 +208,8 @@ This verifies the chart SHA-256, installs or reconciles release `chaos-mesh` in
 namespace `chaos-mesh`, and waits for readiness. Repeated calls reapply the
 repository's values, including containerd support, namespace filtering, and a
 disabled dashboard/DNS service. It uses the local kubeconfig and never creates
-or starts the cluster. Namespace enrollment, native faults, workloads, and
-qualification remain separate; see [native faults](chaos/operations.md#install-and-enroll).
-Successful installation does not qualify live fault injection on Kubernetes 1.37.
+or starts the cluster. Namespace enrollment, native faults and workloads remain
+separate; see [native faults](chaos/operations.md#install-and-enroll).
 
 Stop/start preserves disk data, not uninterrupted workload execution.
 `make verify-local-cluster` tests command behavior with fake CLIs and does not
@@ -240,6 +237,11 @@ CRDs. A new reference field also needs its target declared in
 `tools/crd-reference/references.go`. Generated code, CRDs and skill references must be
 committed with their API source changes; CI rejects drift.
 
+The drift check regenerates outputs and runs `git diff --exit-code` against the
+index. It ignores untracked files and passes vacuously against an empty index. To
+check uncommitted work without touching your index, copy the tree to a temporary
+clone, `git add -A` there, then run the check.
+
 `make helm-verify` validates values schemas, renders supported configurations,
 and structurally checks the manager Deployment's security posture. It also
 executes negative renders for unsafe replica settings and malformed image-pull
@@ -254,19 +256,15 @@ compiles all three operator images from the repository's default-deny root build
 context. CI runs both so sibling-module changes cannot silently break image
 builds.
 
-The network runtime consumes the types-only `apis/network` module through a
-repository-local replacement. Published releases tag the API module first so
-that the runtime module's declared version remains resolvable without that
-replacement.
+Operator and tool modules consume `apis/network` and `libs/*` through
+repository-local replacements; see [releases](releases.md#versioning) for tag
+order. Operator modules do not import each other. `module-policy-check` rejects
+controller-runtime and client-go in `apis/network`, and Kubernetes, API and operator
+modules in `libs/*`.
 
-Paired executor/lifecycle tests in the network module import the action
-controller packages through a test-only local module requirement. Production
-binaries do not import another operator’s runtime; the repository contract
-check enforces that boundary. Each module retains its own dependency pins, but
-Go’s minimal version selection includes the test dependency in the network
-module’s build list. An action-side dependency upgrade can therefore change
-network-selected versions; qualify the pair together. A separate paired-test
-module is deferred until independent version divergence warrants it.
+controller-runtime registers controller names globally. Envtest suites that start
+several managers in one process (including `-count=N`) must set
+`SkipNameValidation`.
 
 Changes to admitted inventory, leaf specifications, actor Service ports, or
 kubelet image-ID parsing must update the relevant fixture under

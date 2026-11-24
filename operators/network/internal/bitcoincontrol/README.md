@@ -49,9 +49,8 @@ finalizers retain that evidence until its status publication succeeds.
 Unit tests cover full first-gate progression, identity changes, unknown delivery,
 lost CAS acknowledgements, API outage receipts, pause/deadline behavior, wallet
 cleanup conflicts, production replacement, and workload drift. Integration tests
-exercise API status ownership and process-evidence retention. Native Core and
-Kubernetes deployment qualification are separate gates; these tests do not
-qualify legacy-runtime safety claims for the replacement.
+exercise API status ownership and process-evidence retention. They do not exercise
+native Core or a real Kubernetes deployment.
 
 Bootstrap offers expire after `max(sampled cadence, 30s)`, independently of the
 next cadence tick. Fresh converged height/tip changes or current production

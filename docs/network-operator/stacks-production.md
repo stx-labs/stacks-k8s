@@ -18,12 +18,13 @@ coordinate a shared account's nonce. Use separate accounts for baseline operatio
 
 Install the [network chart](../../charts/stacks-network-operator/README.md), load
 compatible node/signer images, and apply the
-[30-actor composition](../design/public-api/examples/30-actors.yaml) in a fresh
-namespace. The root starts paused. Inspect its inputs, then request `Running`.
+[30-actor composition](../api/examples/30-actors.yaml) in a fresh
+namespace. The example root sets `operation: Paused`; inspect its inputs, then request
+`Running`.
 No external bootstrap or signer-maintenance command is required.
 
 Controllers capture genesis, allocate actors and scoped Go workers, and advance the
-[protocol gates](../design/public-api/protocol-timing.md). Workers verify native
+[protocol gates](../api/protocol-timing.md). Workers verify native
 transaction inclusion and contract state before reporting completion. Pod readiness,
 Bitcoin height and successful transaction submission are not substitutes for those
 observations. sBTC deployment is standard initialization; epoch selection comes from
@@ -36,4 +37,4 @@ traffic can therefore make the root non-operational without changing actor readi
 Management Pods use `restartPolicy: Never` and exact-Pod activation. A surviving
 worker retains its nonce and pending transaction across operator restarts; loss of
 that worker fails the experiment. Unknown sends are not reconstructed or retried by
-a replacement process. See [runtime status and failure boundaries](public-api-foundation.md).
+a replacement process. See [runtime status and failure boundaries](runtime.md).

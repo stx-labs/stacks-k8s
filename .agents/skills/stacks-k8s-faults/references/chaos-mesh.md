@@ -90,8 +90,8 @@ kubectl -n lab-x get networkchaos partition-miner-signer -o yaml   # record UID 
 - Faults against `stacks-observation-system` disrupt recording for every network.
 - Replacement Pods can match the same selector; record selected Pod UIDs.
 
-Only `NetworkChaos` delay and partition have repository qualification records, from
-an earlier runtime. Other kinds and modes need their effects measured.
+Only `NetworkChaos` delay and partition effects have been measured; measure other kinds
+and modes before relying on them.
 
 ## Recover and clean up
 

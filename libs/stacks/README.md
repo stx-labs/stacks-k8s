@@ -47,8 +47,8 @@ compare consensus bytes, TxIDs and signatures against pinned Stacks.js 7.6.0. Ex
 Unit tests also cover malformed inputs, transport bounds and signature recovery;
 `clarity.FuzzDecode` checks bounded canonical decoding. RPC implementation reuses the
 repository's existing native-client request/observation approach without importing
-its runtime module. These are library checks; node/contract qualification belongs to
-the consuming worker slices. Stacks.js is a test-only oracle.
+its runtime module. These are library checks; node and contract behavior is verified by the consuming
+workers. Stacks.js is a test-only oracle.
 
 ```bash
 GOWORK=off go test -race ./...

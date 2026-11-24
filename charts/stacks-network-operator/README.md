@@ -6,8 +6,8 @@ manages scoped workers for production, stacking and contract initialization. Net
 initialization requires native protocol evidence; ready Pods alone do not establish a
 functioning network.
 
-See the [runtime guide](../../docs/network-operator/public-api-foundation.md) for
-supported behavior and verification boundaries.
+See the [runtime reference](../../docs/network-operator/runtime.md) for supported
+behavior and limits.
 
 ## Installation boundary
 
@@ -15,7 +15,7 @@ The chart requires Kubernetes 1.37. It serves `v1alpha2` and rejects incompatibl
 existing CRD versions when Helm can query the API server. Offline rendering cannot
 inspect existing schemas. Helm does not upgrade CRDs under `crds/`; review and apply
 schema updates explicitly. See [installation compatibility](../../docs/network-operator/migration.md)
-for the preview chart rename and incompatible old installations.
+for incompatible old installations.
 
 ```bash
 STACKS_KIND_CLUSTER=stacks-k8s
@@ -26,7 +26,7 @@ kind load docker-image stacks-network-operator:dev --name "$STACKS_KIND_CLUSTER"
 helm upgrade --install network charts/stacks-network-operator \
   --kube-context "$STACKS_CONTEXT" --namespace stacks-network-system --create-namespace \
   --set bitcoinObserverImage=stacks-network-operator:dev
-kubectl --context "$STACKS_CONTEXT" apply -f docs/design/public-api/examples/30-actors.yaml
+kubectl --context "$STACKS_CONTEXT" apply -f docs/api/examples/30-actors.yaml
 kubectl --context "$STACKS_CONTEXT" -n lab-30 get stacksnetwork network -o yaml
 ```
 

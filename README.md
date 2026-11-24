@@ -42,12 +42,12 @@ Build actor images before starting a network: a full stacks-core release build s
 the Docker VM with kind and can starve or out-of-memory-kill the cluster
 ([resource budget](docs/network-operator/actor-images.md#resource-budget)).
 
-The [30-actor example](docs/design/public-api/examples/30-actors.yaml) includes
+The [30-actor example](docs/api/examples/30-actors.yaml) includes
 accounts, definitions and a paused root. Set its image references and placement
 for your cluster before applying it. It requires no external bootstrap command:
 
 ```bash
-kubectl --context kind-stacks-k8s apply -f docs/design/public-api/examples/30-actors.yaml
+kubectl --context kind-stacks-k8s apply -f docs/api/examples/30-actors.yaml
 kubectl --context kind-stacks-k8s -n lab-30 patch stacksnetwork network \
   --type=merge -p '{"spec":{"operation":"Running"}}'
 kubectl --context kind-stacks-k8s -n lab-30 get stacksnetwork,stacksnetworkparticipant
@@ -57,7 +57,7 @@ Initialization waits for native protocol evidence, not merely Ready Pods or
 Bitcoin heights. At a five-second Bitcoin cadence, reaching height 300 takes
 at least 25 minutes, plus initialization holds.
 
-For a shorter first run, the [minimal example](docs/design/public-api/examples/minimal.yaml)
+For a shorter first run, the [minimal example](docs/api/examples/minimal.yaml)
 declares the smallest accepted cohort in namespace `lab-minimal`: one Bitcoin node, one mining
 Stacks node hosting the only signer, one stacker, and the required production, sBTC and traffic
 roles. Its epochs start 100 blocks earlier and `batchGeneration` mines the first gate in two
@@ -74,7 +74,7 @@ destructive removal and cleanup.
 | [operators/](operators/) | Independent controller and worker Go modules |
 | [charts/](charts/) | Helm products and generated CRDs |
 | [contracts/](contracts/) | Versioned wire-contract fixtures |
-| [docs/](docs/) | Public API, operation, design and qualification evidence |
+| [docs/](docs/) | Architecture, API reference and operating guides |
 | [tools/](tools/) | Repository checks and local cluster lifecycle helpers |
 
 Go owns runtime configuration, signing, RPC, reconciliation and execution.
