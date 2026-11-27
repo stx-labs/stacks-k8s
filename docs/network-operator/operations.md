@@ -42,6 +42,38 @@ then recreate the network. No replacement worker guesses a nonce or resends an
 uncertain transaction. Bitcoin ambiguity closes the affected target; it does not
 claim that an interrupted RPC stopped executing.
 
+Actor Pods validate their rendered configuration in a `config-check` init container
+that discards the native command's output, so its logs are empty when validation fails.
+A common cause is an operator checkout older than the selected actor image: run the
+operator from current `main` or a release qualified for that image.
+
+## Reaching actors
+
+Service names are hashed per participant incarnation. Read actual addresses from the
+generated participant rather than guessing names:
+
+```bash
+kubectl -n lab-30 get stacksnetworkparticipants -o \
+  custom-columns=NAME:.spec.participantName,POD:.status.runtime.podRef.name,IP:.status.runtime.podIP
+kubectl -n lab-30 get stacksnetworkparticipant <generated-name> \
+  -o jsonpath='{.status.runtime.endpoints}'
+```
+
+`status.runtime.endpoints` lists each Service host and port (`rpc` and `p2p` for
+nodes). Actor Pods also carry `network.stacks.org/participant=<name>` and
+`network.stacks.org/role=actor`, which select one participant's Pod for a
+port-forward. Record the Pod UID with every capture; a replacement Pod is a new process.
+
+### Readiness gating
+
+Stacks node `rpc` and `p2p` Services route only to Ready Pods. The readiness probe is
+`GET /v2/info` every 5 seconds with a 3-second timeout and the default three failures,
+so a node whose RPC handling stalls for about 15 seconds leaves both Services. Peers
+and external clients using the Service then see refused connections, which production
+nodes without such a gate would not. Bitcoin `p2p` Services publish not-ready
+addresses. Reach a stalled Stacks node directly at `status.runtime.podIP`, port 20443
+(RPC) or 20444 (P2P), and account for the gating when attributing lost connectivity.
+
 ## Removal and cleanup
 
 Removing a participant entry destroys its runtime; its name cannot be reused
@@ -64,3 +96,16 @@ Review retained PVCs before deleting the namespace. Namespace deletion also
 removes reusable accounts and definitions. Keep the local kind cluster running;
 uninstall per-experiment action/observation/profile releases after their resources
 have finished cleanup. Do not remove finalizers to manufacture successful shutdown.
+
+## Recovery after node loss
+
+When kind node containers are killed or restarted during initialization, for example
+by the Docker VM's out-of-memory killer, restart them with `make cluster-start` and
+check every network. Actor Pods can then fail in their init container. Termination of
+a process that never started is not yet confirmed, so the
+`network.stacks.org/actor-termination` finalizer holds those Pods: `Stopped` never
+completes and a deleted root stays `Destroying`.
+
+There is no supported recovery for such a network yet. Do not remove finalizers.
+Record the namespace and its state as abandoned, leave it in place, and continue in a
+fresh namespace with a new root. Recreating the cluster removes abandoned namespaces.

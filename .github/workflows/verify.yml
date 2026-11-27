@@ -107,9 +107,11 @@ jobs:
             operators/observability/tools/go.sum
             tools/chart-policy/go.sum
             tools/module-policy/go.sum
+            tools/crd-reference/go.sum
       - run: make modules-verify
       - run: make module-policy-verify
       - run: make verify-local-cluster
+      - run: make verify-skills
 
   containers:
     name: Container builds

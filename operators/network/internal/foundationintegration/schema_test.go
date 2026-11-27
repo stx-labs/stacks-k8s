@@ -79,6 +79,7 @@ func TestFoundationSchemasAndFreeze(t *testing.T) {
 	verifyManagerAndScopedJob(t, ctx, c, cfg, scheme)
 	// Complete example cohorts must survive schema admission without silent field pruning.
 	t.Logf("strictly admitted %d minimal objects", admitExample(t, ctx, c, "minimal.yaml"))
+	t.Logf("strictly admitted %d separate-roles objects", admitExample(t, ctx, c, "separate-roles.yaml"))
 	t.Logf("strictly admitted %d objects", admitExample(t, ctx, c, "30-actors.yaml"))
 	ns := "lab-30"
 	key := types.NamespacedName{Namespace: ns, Name: "network"}
@@ -107,9 +108,11 @@ func TestFoundationSchemasAndFreeze(t *testing.T) {
 	}
 	var network api.StacksNetwork
 	completedJobs := map[types.UID]bool{}
-	step := func() {
+	// stepIn drives one root plus its namespace's identity resolvers and Jobs once.
+	stepIn := func(key types.NamespacedName, network *api.StacksNetwork) {
 		t.Helper()
-		driveRoot(t, ctx, c, root, request, &network)
+		ns := key.Namespace
+		driveRoot(t, ctx, c, root, ctrl.Request{NamespacedName: key}, network)
 		var accounts stacks.StacksAccountList
 		if err := c.List(ctx, &accounts, client.InNamespace(ns)); err != nil {
 			t.Fatal(err)
@@ -156,10 +159,13 @@ func TestFoundationSchemasAndFreeze(t *testing.T) {
 			}
 			completedJobs[job.UID] = true
 		}
-		if err := c.Get(ctx, key, &network); err != nil {
+		if err := c.Get(ctx, key, network); err != nil {
 			t.Fatal(err)
 		}
 	}
+	step := func() { stepIn(key, &network) }
+	verifyExampleResolves(t, "lab-minimal", stepIn)
+	verifyExampleResolves(t, "lab-separate-roles", stepIn)
 	for i := 0; i < 80; i++ {
 		step()
 		if network.Status.InputDigest != "" {
@@ -401,6 +407,24 @@ func TestFoundationSchemasAndFreeze(t *testing.T) {
 }
 
 // admitExample strictly creates every object of one public API example and returns their count.
+// verifyExampleResolves drives a paused example root until its complete participant graph resolves.
+func verifyExampleResolves(
+	t *testing.T,
+	namespace string,
+	step func(types.NamespacedName, *api.StacksNetwork),
+) {
+	t.Helper()
+	key := types.NamespacedName{Namespace: namespace, Name: "network"}
+	var network api.StacksNetwork
+	for i := 0; i < 80 && network.Status.InputDigest == ""; i++ {
+		step(key, &network)
+	}
+	if network.Status.InputDigest == "" || network.Status.Phase != "Resolving" ||
+		!meta.IsStatusConditionTrue(network.Status.Conditions, "Resolved") {
+		t.Fatalf("%s did not resolve while paused: %+v", namespace, network.Status)
+	}
+}
+
 func admitExample(t *testing.T, ctx context.Context, c client.Client, name string) int {
 	t.Helper()
 	path := filepath.Join("..", "..", "..", "..", "docs", "design", "public-api", "examples", name)

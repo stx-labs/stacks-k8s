@@ -17,7 +17,8 @@ MODULE_DIRS := \
 	tools/stacks-inspect \
 	tools/stacks-preflight \
 	tools/module-policy \
-	tools/local-cluster
+	tools/local-cluster \
+	tools/crd-reference
 
 # Generator-only modules pin tools via go.mod tool directives and contain no
 # lintable Go packages.
@@ -28,7 +29,7 @@ LINT_CONFIG := $(CURDIR)/.golangci.yml
 	test-integration test-race verify verify-chart-policy verify-network \
 	verify-observability verify-action vuln
 
-verify: lint fmt-check api-verify verify-library verify-local-cluster modules-verify module-policy-verify verify-chart-policy verify-network verify-observability verify-action
+verify: lint fmt-check api-verify verify-library verify-local-cluster verify-skills modules-verify module-policy-verify verify-chart-policy verify-network verify-observability verify-action
 
 api-verify:
 	$(MAKE) -C apis/network verify
@@ -90,6 +91,7 @@ fmt-fix: lint-tool-verify
 generate:
 	$(MAKE) -C apis/network generate
 	$(MAKE) -C operators/observability generate
+	GOWORK=off $(GO) -C tools/crd-reference run . -root ../..
 
 test:
 	$(MAKE) -C apis/network test
@@ -133,6 +135,7 @@ vuln:
 	GOWORK=off $(GO) -C tools/stacks-evidence run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 	GOWORK=off $(GO) -C libs/stacks run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 	GOWORK=off $(GO) -C tools/chart-policy run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+	GOWORK=off $(GO) -C tools/crd-reference run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 	npm --prefix operators/network/transactions audit --omit=dev
 	GOWORK=off $(GO) -C apis/network run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 	GOWORK=off $(GO) -C operators/network run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
@@ -160,6 +163,12 @@ $(CLUSTER_TARGETS):
 verify-local-cluster:
 	GOWORK=off $(GO) -C tools/local-cluster vet ./...
 	GOWORK=off $(GO) -C tools/local-cluster test ./...
+
+# The generator's tests include the drift check for committed skill references.
+.PHONY: verify-skills
+verify-skills:
+	GOWORK=off $(GO) -C tools/crd-reference vet ./...
+	GOWORK=off $(GO) -C tools/crd-reference test ./...
 
 .PHONY: verify-library
 verify-library:

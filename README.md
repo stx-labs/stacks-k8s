@@ -38,6 +38,9 @@ export KUBECONFIG="$PWD/tools/local-cluster/kubeconfig"
 Build and load the operator and compatible Stacks actor images, then install the
 [network chart](charts/stacks-network-operator/README.md). Images built from local
 revisions are supported; see [actor images](docs/network-operator/actor-images.md).
+Build actor images before starting a network: a full stacks-core release build shares
+the Docker VM with kind and can starve or out-of-memory-kill the cluster
+([resource budget](docs/network-operator/actor-images.md#resource-budget)).
 
 The [30-actor example](docs/design/public-api/examples/30-actors.yaml) includes
 accounts, definitions and a paused root. Set its image references and placement

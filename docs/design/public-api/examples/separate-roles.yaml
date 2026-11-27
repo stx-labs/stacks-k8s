@@ -1,0 +1,578 @@
+# Separate roles: one mining Stacks node, two dedicated signer-hosting nodes (one stacker each)
+# and a non-mining follower, so the miner and each signer run in separate stacks-node processes.
+# Miner-side actors run on stacks-k8s-worker and signer-side actors on stacks-k8s-worker2.
+# Participant names match the publicintegration harness's minimal14 variant; follower-01 is extra.
+# Epochs and batched first-gate generation follow minimal.yaml (15 participants).
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-separate-roles
+---
+apiVersion: network.stacks.org/v1alpha2
+kind: StacksEpochSchedule
+metadata:
+  name: epochs
+  namespace: lab-separate-roles
+spec:
+  epochs:
+  - name: '1.0'
+    startHeight: 0
+  - name: '2.0'
+    startHeight: 0
+  - name: '2.05'
+    startHeight: 103
+  - name: '2.1'
+    startHeight: 104
+  - name: '2.2'
+    startHeight: 106
+  - name: '2.3'
+    startHeight: 107
+  - name: '2.4'
+    startHeight: 108
+  - name: '2.5'
+    startHeight: 109
+  - name: '3.0'
+    startHeight: 152
+  - name: '3.1'
+    startHeight: 153
+  - name: '3.2'
+    startHeight: 154
+  - name: '3.3'
+    startHeight: 155
+  - name: '3.4'
+    startHeight: 162
+  - name: '4.0'
+    startHeight: 182
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksAccount
+metadata:
+  name: holder-01
+  namespace: lab-separate-roles
+spec:
+  key:
+    generate: true
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksAccount
+metadata:
+  name: admin-01
+  namespace: lab-separate-roles
+spec:
+  key:
+    generate: true
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksAccount
+metadata:
+  name: consensus-01
+  namespace: lab-separate-roles
+spec:
+  key:
+    generate: true
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksAccount
+metadata:
+  name: holder-02
+  namespace: lab-separate-roles
+spec:
+  key:
+    generate: true
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksAccount
+metadata:
+  name: admin-02
+  namespace: lab-separate-roles
+spec:
+  key:
+    generate: true
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksAccount
+metadata:
+  name: consensus-02
+  namespace: lab-separate-roles
+spec:
+  key:
+    generate: true
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksAccount
+metadata:
+  name: miner-key-01
+  namespace: lab-separate-roles
+spec:
+  key:
+    generate: true
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksAccount
+metadata:
+  name: sbtc-deployer
+  namespace: lab-separate-roles
+spec:
+  key:
+    generate: true
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksAccount
+metadata:
+  name: traffic-account
+  namespace: lab-separate-roles
+spec:
+  key:
+    generate: true
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksAccount
+metadata:
+  name: traffic-recipient
+  namespace: lab-separate-roles
+spec:
+  key:
+    generate: true
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksAccount
+metadata:
+  name: bridge-key-01
+  namespace: lab-separate-roles
+spec:
+  key:
+    generate: true
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksAccount
+metadata:
+  name: bridge-key-02
+  namespace: lab-separate-roles
+spec:
+  key:
+    generate: true
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksAccount
+metadata:
+  name: bridge-aggregate
+  namespace: lab-separate-roles
+spec:
+  key:
+    generate: true
+---
+apiVersion: bitcoin.stacks.org/v1alpha2
+kind: BitcoinWallet
+metadata:
+  name: production-wallet
+  namespace: lab-separate-roles
+spec:
+  walletName: production
+  keySource:
+    generate: true
+  watchOnly: true
+---
+apiVersion: bitcoin.stacks.org/v1alpha2
+kind: BitcoinWallet
+metadata:
+  name: miner-wallet-01
+  namespace: lab-separate-roles
+spec:
+  walletName: miner-01
+  keySource:
+    stacksMinerAccountRef:
+      name: miner-key-01
+  watchOnly: true
+---
+apiVersion: bitcoin.stacks.org/v1alpha2
+kind: BitcoinNode
+metadata:
+  name: btc-01
+  namespace: lab-separate-roles
+spec:
+  peers:
+    discovery: Network
+  placement:
+    nodeSelector:
+      kubernetes.io/hostname: stacks-k8s-worker
+  walletRefs:
+  - name: production-wallet
+---
+apiVersion: bitcoin.stacks.org/v1alpha2
+kind: BitcoinNode
+metadata:
+  name: btc-02
+  namespace: lab-separate-roles
+spec:
+  peers:
+    discovery: Network
+  placement:
+    nodeSelector:
+      kubernetes.io/hostname: stacks-k8s-worker2
+---
+apiVersion: bitcoin.stacks.org/v1alpha2
+kind: BitcoinNode
+metadata:
+  name: btc-07
+  namespace: lab-separate-roles
+spec:
+  peers:
+    discovery: Network
+  placement:
+    nodeSelector:
+      kubernetes.io/hostname: stacks-k8s-worker
+  walletRefs:
+  - name: miner-wallet-01
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksNode
+metadata:
+  name: miner-01
+  namespace: lab-separate-roles
+spec:
+  bitcoinNodeRef:
+    name: btc-07
+  identityAccountRef:
+    name: miner-key-01
+  mining:
+    enabled: true
+    bitcoinWalletRef:
+      name: miner-wallet-01
+    feeRateSatsPerVByte: 2
+  peers:
+    discovery: Network
+  placement:
+    nodeSelector:
+      kubernetes.io/hostname: stacks-k8s-worker
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksNode
+metadata:
+  name: signer-node-01
+  namespace: lab-separate-roles
+spec:
+  bitcoinNodeRef:
+    name: btc-02
+  peers:
+    discovery: Network
+  placement:
+    nodeSelector:
+      kubernetes.io/hostname: stacks-k8s-worker2
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksNode
+metadata:
+  name: signer-node-02
+  namespace: lab-separate-roles
+spec:
+  bitcoinNodeRef:
+    name: btc-02
+  peers:
+    discovery: Network
+  placement:
+    nodeSelector:
+      kubernetes.io/hostname: stacks-k8s-worker2
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksNode
+metadata:
+  name: follower-01
+  namespace: lab-separate-roles
+spec:
+  bitcoinNodeRef:
+    name: btc-02
+  peers:
+    discovery: Network
+  placement:
+    nodeSelector:
+      kubernetes.io/hostname: stacks-k8s-worker2
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksSigner
+metadata:
+  name: signer-01
+  namespace: lab-separate-roles
+spec:
+  nodeRef:
+    name: signer-node-01
+  accountRef:
+    name: consensus-01
+  placement:
+    nodeSelector:
+      kubernetes.io/hostname: stacks-k8s-worker2
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksStacker
+metadata:
+  name: stacker-01
+  namespace: lab-separate-roles
+spec:
+  holderAccountRef:
+    name: holder-01
+  administratorAccountRef:
+    name: admin-01
+  signerRef:
+    name: signer-01
+  targetNodeRef:
+    name: signer-node-01
+  amountMicroSTX: '1000000000000000'
+  lockCycles: 6
+  renewWhenRemainingCycles: 3
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksSigner
+metadata:
+  name: signer-02
+  namespace: lab-separate-roles
+spec:
+  nodeRef:
+    name: signer-node-02
+  accountRef:
+    name: consensus-02
+  placement:
+    nodeSelector:
+      kubernetes.io/hostname: stacks-k8s-worker2
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksStacker
+metadata:
+  name: stacker-02
+  namespace: lab-separate-roles
+spec:
+  holderAccountRef:
+    name: holder-02
+  administratorAccountRef:
+    name: admin-02
+  signerRef:
+    name: signer-02
+  targetNodeRef:
+    name: signer-node-02
+  amountMicroSTX: '1000000000000000'
+  lockCycles: 6
+  renewWhenRemainingCycles: 3
+---
+apiVersion: bitcoin.stacks.org/v1alpha2
+kind: BitcoinBlockSchedule
+metadata:
+  name: steady-blocks
+  namespace: lab-separate-roles
+spec:
+  cadence:
+    mode: Fixed
+    interval: 5s
+---
+apiVersion: bitcoin.stacks.org/v1alpha2
+kind: BitcoinBlockProduction
+metadata:
+  name: blocks
+  namespace: lab-separate-roles
+spec:
+  scheduleRef:
+    name: steady-blocks
+  targets:
+  - nodeRef:
+      name: btc-01
+    weight: 1
+  - nodeRef:
+      name: btc-02
+    weight: 1
+  payoutWalletRef:
+    name: production-wallet
+  initialization:
+    targetNodeRef:
+      name: btc-01
+    minimumHeight: 103
+    minerWalletRefs:
+    - name: miner-wallet-01
+    matureOutputsPerMiner: 2
+    batchGeneration: true
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksTransactionProduction
+metadata:
+  name: traffic
+  namespace: lab-separate-roles
+spec:
+  accountRef:
+    name: traffic-account
+  targetNodeRef:
+    name: signer-node-01
+  recipient:
+    accountRef:
+      name: traffic-recipient
+  amountMicroSTX: '1'
+  feeMicroSTX: '1000'
+  interval: 5s
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksContractSet
+metadata:
+  name: sbtc
+  namespace: lab-separate-roles
+spec:
+  deployerAccountRef:
+    name: sbtc-deployer
+  targetNodeRef:
+    name: miner-01
+  bundle: sbtc-regtest-v1
+  initialization:
+    mode: ExplicitTestRegistry
+    signerAccountRefs:
+    - name: bridge-key-01
+    - name: bridge-key-02
+    aggregateKeyAccountRef:
+      name: bridge-aggregate
+    threshold: 2
+---
+apiVersion: stacks.stacks.org/v1alpha2
+kind: StacksFaucet
+metadata:
+  name: faucet
+  namespace: lab-separate-roles
+spec:
+  genesisBalanceMicroSTX: '5000000000000000'
+  maxRequestMicroSTX: '2000000000000000'
+  targetNodeRef:
+    name: signer-node-01
+---
+apiVersion: network.stacks.org/v1alpha2
+kind: StacksNetwork
+metadata:
+  name: network
+  namespace: lab-separate-roles
+spec:
+  profile: regtest-pox4-pox5-v1
+  epochScheduleRef:
+    name: epochs
+  genesis:
+    allocations:
+    - accountRef:
+        name: holder-01
+      amountMicroSTX: '2000000000000000'
+    - accountRef:
+        name: admin-01
+      amountMicroSTX: '1000000000000'
+    - accountRef:
+        name: holder-02
+      amountMicroSTX: '2000000000000000'
+    - accountRef:
+        name: admin-02
+      amountMicroSTX: '1000000000000'
+    - accountRef:
+        name: miner-key-01
+      amountMicroSTX: '1000000000000'
+    - accountRef:
+        name: sbtc-deployer
+      amountMicroSTX: '1000000000000'
+    - accountRef:
+        name: traffic-account
+      amountMicroSTX: '1000000000000'
+    pox:
+      rewardCycleLength: 20
+      prepareLength: 5
+  participants:
+  - name: btc-01
+    kind: BitcoinNode
+    definition:
+      ref:
+        name: btc-01
+  - name: btc-02
+    kind: BitcoinNode
+    definition:
+      ref:
+        name: btc-02
+  - name: btc-07
+    kind: BitcoinNode
+    definition:
+      ref:
+        name: btc-07
+  - name: miner-01
+    kind: StacksNode
+    definition:
+      ref:
+        name: miner-01
+  - name: signer-node-01
+    kind: StacksNode
+    definition:
+      ref:
+        name: signer-node-01
+  - name: signer-node-02
+    kind: StacksNode
+    definition:
+      ref:
+        name: signer-node-02
+  - name: follower-01
+    kind: StacksNode
+    definition:
+      ref:
+        name: follower-01
+  - name: signer-01
+    kind: StacksSigner
+    definition:
+      ref:
+        name: signer-01
+  - name: signer-02
+    kind: StacksSigner
+    definition:
+      ref:
+        name: signer-02
+  - name: stacker-01
+    kind: StacksStacker
+    definition:
+      ref:
+        name: stacker-01
+  - name: stacker-02
+    kind: StacksStacker
+    definition:
+      ref:
+        name: stacker-02
+  - name: blocks
+    kind: BitcoinBlockProduction
+    definition:
+      ref:
+        name: blocks
+  - name: traffic
+    kind: StacksTransactionProduction
+    definition:
+      ref:
+        name: traffic
+  - name: sbtc
+    kind: StacksContractSet
+    definition:
+      ref:
+        name: sbtc
+  - name: faucet
+    kind: StacksFaucet
+    definition:
+      ref:
+        name: faucet
+  defaults:
+    workerPlacement:
+      nodeSelector:
+        kubernetes.io/hostname: stacks-k8s-control-plane
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+    images:
+      bitcoin: bitcoin/bitcoin:31.1
+      stacksNode: ghcr.io/stacks-network/stacks-core:4.0.5
+      stacksSigner: ghcr.io/stacks-network/stacks-signer:4.0.5
+    storage:
+      size: 2Gi
+      retainOnDelete: false
+    actorResources:
+      bitcoin:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+      stacksNode:
+        requests:
+          cpu: 300m
+          memory: 768Mi
+      stacksSigner:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+  operation: Paused
