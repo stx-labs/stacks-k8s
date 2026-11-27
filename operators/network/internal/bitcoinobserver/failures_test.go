@@ -74,14 +74,14 @@ func TestSharedDeadlineReportsFailedStepWithoutAttributingCause(t *testing.T) {
 	server := rpcFixture(t, &mode, &calls)
 	defer server.Close()
 	transport := bitcoinrpc.New(bitcoinrpc.Credentials{Username: "observer", Password: "private-password"})
-	var budgetAtSecond time.Duration
+	var remainingBudget time.Duration
 	o, err := New(rpcFunc(func(ctx context.Context, endpoint, id, method string, params []any, result any) error {
 		if method == "getchaintips" {
 			deadline, ok := ctx.Deadline()
 			if !ok {
 				return fmt.Errorf("no poll deadline")
 			}
-			budgetAtSecond = time.Until(deadline)
+			remainingBudget = time.Until(deadline)
 			<-ctx.Done()
 			return ctx.Err()
 		}
@@ -102,7 +102,7 @@ func TestSharedDeadlineReportsFailedStepWithoutAttributingCause(t *testing.T) {
 	}
 	record := poll(t, o)
 	if record.Success || record.FailedMethod != "getchaintips" || record.FailedReason != "deadline" ||
-		budgetAtSecond > time.Second || record.Chain != nil || calls.Load() != 1 {
+		remainingBudget > time.Second || record.Chain != nil || calls.Load() != 1 {
 		t.Fatalf("deadline classification or early-stop failed: %+v calls=%d", record, calls.Load())
 	}
 	if o.failures != 1 || !strings.Contains(scrape(t, o), "bitcoin_observer_poll_errors_total 1") {
