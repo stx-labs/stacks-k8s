@@ -408,6 +408,125 @@ func TestShutdownRetainsUnknownAndSettlesTerminatedPod(t *testing.T) {
 	}
 }
 
+// unstartedPod is the status kubelet reports for a deleted actor Pod whose init container failed:
+// the Pod is terminal, and the main container never left Waiting.
+func unstartedPod(phase corev1.PodPhase, main corev1.ContainerStatus) *corev1.Pod {
+	return &corev1.Pod{
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{{Name: "config-check"}},
+			Containers:     []corev1.Container{{Name: "bitcoin"}},
+		},
+		Status: corev1.PodStatus{
+			Phase: phase,
+			InitContainerStatuses: []corev1.ContainerStatus{{
+				Name:         "config-check",
+				ContainerID:  "containerd://init",
+				RestartCount: 2,
+				State: corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Reason: "Error"},
+				},
+			}},
+			ContainerStatuses: []corev1.ContainerStatus{main},
+		},
+	}
+}
+
+func TestTerminatedAcceptsContainersThatNeverStarted(t *testing.T) {
+	waiting := func(reason string) corev1.ContainerStatus {
+		return corev1.ContainerStatus{
+			Name:  "bitcoin",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: reason}},
+		}
+	}
+	ranBefore := waiting("PodInitializing")
+	ranBefore.LastTerminationState.Terminated = &corev1.ContainerStateTerminated{ExitCode: 0}
+	restarted := waiting("PodInitializing")
+	restarted.RestartCount = 1
+	created := waiting("CreateContainerError")
+	created.ContainerID = "containerd://main"
+	// Kubelet reports this for a deleted Pod whose image was never pulled, and for a running
+	// container it lost: the two cannot be told apart, so neither confirms termination.
+	unknown := corev1.ContainerStatus{
+		Name: "bitcoin",
+		State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+			ExitCode: 137,
+			Reason:   "ContainerStatusUnknown",
+			Message:  "The container could not be located when the pod was terminated",
+		}},
+	}
+	for _, tc := range []struct {
+		name string
+		pod  *corev1.Pod
+		want bool
+	}{
+		{"init container failed, Pod terminal", unstartedPod(corev1.PodFailed, waiting("PodInitializing")), true},
+		{"init container failed, Pod not terminal", unstartedPod(corev1.PodPending, waiting("PodInitializing")), false},
+		{"ran in an earlier sandbox", unstartedPod(corev1.PodFailed, ranBefore), false},
+		{"restarted before", unstartedPod(corev1.PodFailed, restarted), false},
+		{"container created", unstartedPod(corev1.PodFailed, created), false},
+		{"status unknown, e.g. image never pulled", unstartedPod(corev1.PodFailed, unknown), false},
+		{"status missing", unstartedPod(corev1.PodFailed, corev1.ContainerStatus{Name: "other"}), false},
+	} {
+		if got := terminated(tc.pod); got != tc.want {
+			t.Errorf("%s: terminated = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestShutdownSettlesActorWhoseInitContainerFailed(t *testing.T) {
+	p := participantFixture()
+	workload, err := StatefulSet(p, "config", "actor", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workload.UID = "workload-uid"
+	workload.Generation = 1
+	workload.Status.ObservedGeneration = 1
+	pod := unstartedPod(corev1.PodFailed, corev1.ContainerStatus{
+		Name:  "bitcoin",
+		State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}},
+	})
+	pod.ObjectMeta = metav1.ObjectMeta{
+		Name:       workload.Name + "-0",
+		Namespace:  p.Namespace,
+		UID:        "pod-uid",
+		Labels:     Labels(p, "actor"),
+		Finalizers: []string{PodFinalizer},
+		OwnerReferences: []metav1.OwnerReference{{
+			APIVersion: "apps/v1",
+			Kind:       "StatefulSet",
+			Name:       workload.Name,
+			UID:        workload.UID,
+			Controller: ptr.To(true),
+		}},
+	}
+	state := api.ParticipantRuntimeStatus{
+		PodRef: &common.Binding{Kind: "Pod", Name: pod.Name, UID: pod.UID},
+	}
+	c := testClient(t, workload, pod)
+	r := Reconciler{Client: c, Reader: c}
+	reason, err := r.shutdown(context.Background(), p, &state, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Terminated || reason != api.ReasonStopping {
+		t.Fatalf("an actor that never started was not confirmed stopped: termination=%v reason=%s",
+			state.Terminated, reason)
+	}
+	// Once the confirmation is recorded, the retained Pod is released.
+	p.Status.Runtime = state.DeepCopy()
+	if _, err := r.shutdown(context.Background(), p, &state, false); err != nil {
+		t.Fatal(err)
+	}
+	var released corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(pod), &released); err != nil {
+		t.Fatal(err)
+	}
+	if len(released.Finalizers) != 0 {
+		t.Fatalf("retained Pod not released: %v", released.Finalizers)
+	}
+}
+
 func TestControllerInspectsSecretMetadataOnly(t *testing.T) {
 	p := participantFixture()
 	secret := &corev1.Secret{
